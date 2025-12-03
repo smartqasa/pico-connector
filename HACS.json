@@ -1,9 +1,0 @@
-{
-  "name": "Pico Connector",
-  "homeassistant": "2024.0.0",
-  "domains": ["pico_connector"],
-  "render_readme": true,
-  "documentation": "https://github.com/smartqasa/pico-connector",
-  "issue_tracker": "https://github.com/smartqasa/pico-connector/issues",
-  "icon": "https://raw.githubusercontent.com/smartqasa/pico-connector/main/logo.png"
-}
