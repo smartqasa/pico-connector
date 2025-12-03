@@ -1,11 +1,12 @@
 {
-  "domain": "pico_connector",
   "name": "Pico Connector",
-  "version": "0.1.0",
+  "version": "1.1.0",
+  "domain": "pico_connector",
   "documentation": "https://github.com/smartqasa/pico-connector",
   "issue_tracker": "https://github.com/smartqasa/pico-connector/issues",
-  "requirements": [],
   "codeowners": ["@smartqasa"],
   "iot_class": "local_push",
-  "loggers": ["custom_components.pico_connector"]
+  "quality_scale": "internal",
+  "dependencies": [],
+  "requirements": []
 }

@@ -1,12 +1,4 @@
 {
   "name": "Pico Connector",
-  "homeassistant": "2023.1.0",
-  "integration": true,
-  "filename": "__init__.py",
-  "domains": ["pico_connector"],
-  "iot_class": "Assumed State",
-  "render_readme": true,
-  "documentation": "https://github.com/smartqasa/pico-connector",
-  "issue_tracker": "https://github.com/smartqasa/pico-connector/issues",
-  "icon": "https://raw.githubusercontent.com/smartqasa/pico-connector/main/logo.png"
+  "homeassistant": "2023.1.0"
 }
