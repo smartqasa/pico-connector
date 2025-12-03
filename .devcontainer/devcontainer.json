@@ -1,0 +1,19 @@
+{
+  "name": "Pico Connector Dev",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  "features": {
+    "ghcr.io/devcontainers/features/git:1": {}
+  },
+  "postCreateCommand": "python -m venv .venv && . .venv/bin/activate && pip install -r requirements-dev.txt",
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "python.defaultInterpreterPath": "/workspaces/pico-connector/.venv/bin/python",
+        "python.analysis.extraPaths": ["custom_components"],
+        "python.analysis.typeCheckingMode": "basic"
+      },
+      "extensions": ["ms-python.python", "ms-python.vscode-pylance"]
+    }
+  },
+  "remoteUser": "vscode"
+}

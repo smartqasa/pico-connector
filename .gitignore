@@ -1,0 +1,62 @@
+# ------------------------------
+# Python
+# ------------------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+.MacOSX/
+*.so
+.Python
+
+# ------------------------------
+# Virtual Environments
+# ------------------------------
+.venv/
+venv/
+ENV/
+env/
+env.bak/
+
+# ------------------------------
+# VS Code
+# ------------------------------
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# ------------------------------
+# Backup / Cache / Logs
+# ------------------------------
+*.log
+*.tmp
+*.swp
+*.swo
+.DS_Store
+
+# ------------------------------
+# Home Assistant scaffolding
+# ------------------------------
+.storage/
+deps/
+home-assistant.log
+homeassistant/
+config/
+configuration.yaml.backup
+secrets.yaml
+
+# ------------------------------
+# pytest / coverage
+# ------------------------------
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ------------------------------
+# Node / misc tooling (future-proof)
+# ------------------------------
+node_modules/
+dist/
+build/
