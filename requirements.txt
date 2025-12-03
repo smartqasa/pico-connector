@@ -1,6 +1,0 @@
-homeassistant
-homeassistant-stubs
-pytest
-pytest-asyncio
-pytest-homeassistant-custom-component
-
