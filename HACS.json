@@ -1,0 +1,7 @@
+{
+  "name": "Pico Connector",
+  "render_readme": true,
+  "domains": ["pico_connector"],
+  "homeassistant": "2024.0.0",
+  "country": "US"
+}
