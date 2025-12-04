@@ -15,7 +15,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Set up pico_connector from YAML configuration."""
+    """Set up pico_link from YAML configuration."""
     raw_confs = config.get(DOMAIN)
     if not raw_confs:
         _LOGGER.debug("No %s configuration found in configuration.yaml", DOMAIN)
@@ -51,5 +51,5 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             ctl.async_stop()
 
     hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _async_stop)
-    _LOGGER.info("pico_connector initialized with %s controller(s)", len(controllers))
+    _LOGGER.info("pico_link initialized with %s controller(s)", len(controllers))
     return True

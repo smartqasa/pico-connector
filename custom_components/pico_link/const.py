@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-DOMAIN = "pico_connector"
+DOMAIN = "pico_link"
 
 # Lutron Caseta event type we listen to
 PICO_EVENT_TYPE = "lutron_caseta_button_event"

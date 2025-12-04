@@ -1,7 +1,7 @@
 {
   "name": "Pico Connector",
   "version": "1.1.0",
-  "domain": "pico_connector",
+  "domain": "pico_link",
   "documentation": "https://github.com/smartqasa/pico-connector",
   "issue_tracker": "https://github.com/smartqasa/pico-connector/issues",
   "codeowners": ["@smartqasa"],

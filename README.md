@@ -65,7 +65,7 @@ dimming logic tailored to the three main Pico families.
 
 Copy the folder into:
 
-config/custom_components/pico_connector/
+config/custom_components/pico_link/
 
 Restart Home Assistant.
 
@@ -76,7 +76,7 @@ Restart Home Assistant.
 Add one or more Pico mappings in your `configuration.yaml`:
 
 ```yaml
-pico_connector:
+pico_link:
   - device_id: f00abdc1ee0fed3b5fd56b1d800154a7
     entities:
       - light.office_desk_strip
