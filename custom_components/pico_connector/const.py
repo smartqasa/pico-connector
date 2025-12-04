@@ -11,4 +11,13 @@ PROFILE_PADDLE = "paddle"
 PROFILE_TWO_BUTTON = "two_button"
 
 # Logical button names we care about
-SUPPORTED_BUTTONS = ("on", "off", "raise", "lower", "stop")
+SUPPORTED_BUTTONS_PADDLE = ("on", "off")
+SUPPORTED_BUTTONS_FIVE = ("on", "off", "raise", "lower", "stop")
+SUPPORTED_BUTTONS_TWO = ("on", "off")
+
+PROFILE_SUPPORTED_BUTTONS = {
+    PROFILE_PADDLE: SUPPORTED_BUTTONS_PADDLE,
+    PROFILE_FIVE_BUTTON: SUPPORTED_BUTTONS_FIVE,
+    PROFILE_TWO_BUTTON: SUPPORTED_BUTTONS_TWO,
+}
+

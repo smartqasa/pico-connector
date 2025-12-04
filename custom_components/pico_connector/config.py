@@ -5,18 +5,33 @@ from typing import Any, Dict, List
 
 from .const import PROFILE_FIVE_BUTTON, PROFILE_PADDLE, PROFILE_TWO_BUTTON
 
+from __init__ import _LOGGER
+
 
 @dataclass
 class PicoConfig:
-    """Runtime config for a single Pico controller."""
-
     device_id: str
-    entities: List[str]
-    profile: str  
-    hold_time_ms: int
-    step_pct: int
-    step_time_ms: int
-    brightness_on_pct: int
+    profile: str
+    entities: list[str]
+    hold_time_ms: int = 300
+    step_time_ms: int = 200
+    step_pct: int = 5
+    brightness_on_pct: int = 100
+
+    def validate(self) -> None:
+        """Sanity checks based on profile type."""
+        if self.profile == PROFILE_TWO_BUTTON:
+            # Two-button Picos have no holds and no ramp
+            if self.hold_time_ms != 0:
+                _LOGGER.debug(
+                    "Ignoring hold_time_ms for two-button Pico %s; holds not supported",
+                    self.device_id,
+                )
+            if self.step_time_ms != 0 or self.step_pct != 0:
+                _LOGGER.debug(
+                    "Ignoring step ramp settings for two-button Pico %s; ramp not supported",
+                    self.device_id,
+                )
 
 
 def parse_pico_config(raw: Dict[str, Any]) -> PicoConfig:
