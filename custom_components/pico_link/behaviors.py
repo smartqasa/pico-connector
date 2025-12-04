@@ -301,6 +301,12 @@ class SharedBehaviors:
     # ---------------------------------------------------------------------
 
     async def _execute_button_action(self, action: Dict[str, Any]) -> None:
+        _LOGGER.warning(
+            "FOUR_BUTTON DEBUG: Device %s executing action: %s",
+            self.conf.device_id,
+            action,
+        )
+        
         try:
             domain, service = action["action"].split(".", 1)
         except Exception as err:
