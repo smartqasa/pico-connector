@@ -1,18 +1,17 @@
-# Pico Connector
+# Pico Link
 
-### A Reliable Lutron Pico → Home Assistant Light Controller
+### A Reliable Lutron Pico → Home Assistant Device Controller
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://hacs.xyz)
-![GitHub release (latest by date)](https://img.shields.io/github/v/release/smartqasa/pico-connector)
-![GitHub License](https://img.shields.io/github/license/smartqasa/pico-connector)
+![GitHub release (latest by date)](https://img.shields.io/github/v/release/smartqasa/pico-link)
+![GitHub License](https://img.shields.io/github/license/smartqasa/pico-link)
 
 ---
 
 ## 🌟 Overview
 
-**Pico Connector** is a lightweight, reliable Home Assistant integration that
-turns **Lutron Caseta Pico remotes** into powerful and responsive device
-controllers.
+**Pico Link** is a lightweight, reliable Home Assistant integration that turns
+**Lutron Caseta Pico remotes** into powerful and responsive device controllers.
 
 This integration uses async tasks, requires no polling, and is extremely fast.
 
@@ -53,10 +52,10 @@ dimming logic tailored to the three main Pico families.
 2. Click **⋮ → Custom Repositories**
 3. Add:
 
-   https://github.com/smartqasa/pico-connector
+   https://github.com/smartqasa/pico-link
 
 4. Choose **Integration**
-5. Search for **Pico Connector** and install it
+5. Search for **Pico Link** and install it
 6. Restart Home Assistant
 
 ---
@@ -120,7 +119,7 @@ Use that value in your YAML config.
 
 ---
 
-## 🧠 Why Use Pico Connector Instead of Automations?
+## 🧠 Why Use Pico Link Instead of Automations?
 
 - More reliable long-press & ramp detection
 - Perfectly consistent behavior across all Picos
@@ -135,7 +134,7 @@ Use that value in your YAML config.
 
 Issues and PRs are welcome:
 
-https://github.com/smartqasa/pico-connector/issues
+https://github.com/smartqasa/pico-link/issues
 
 ---
 
