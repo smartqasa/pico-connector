@@ -5,9 +5,9 @@ from typing import Any, Dict, List
 
 from .const import (
     PROFILE_FIVE_BUTTON,
+    PROFILE_FOUR_BUTTON,
     PROFILE_PADDLE,
     PROFILE_TWO_BUTTON,
-    PROFILE_FOUR_BUTTON,
 )
 
 import logging
@@ -28,15 +28,18 @@ class PicoConfig:
     step_time_ms: int = 200
     step_pct: int = 5
     on_pct: int = 100
-    fan_speeds: int = 6  # allowed: 4 or 6
+    fan_speeds: int = 6  # Allowed: 4 or 6
 
-    # Four-button per-button actions
+    # Four-button action map
     buttons: Dict[str, List[Dict]] = field(default_factory=dict)
 
-    def validate(self) -> None:
-        """Sanity checks based on profile type."""
+    # ------------------------------------------------------------------
+    # VALIDATION
+    # ------------------------------------------------------------------
 
-        # Allowed profile list
+    def validate(self) -> None:
+        """Validate configuration rules based on the Pico profile."""
+
         allowed_profiles = {
             PROFILE_PADDLE,
             PROFILE_FIVE_BUTTON,
@@ -49,31 +52,33 @@ class PicoConfig:
                 f"Invalid profile '{self.profile}'. Must be one of: {allowed_profiles}"
             )
 
-        # -------------------------------------------------------
+        # ----------------------------------------------------------
         # FOUR BUTTON PROFILE: does not use domain or entities
-        # -------------------------------------------------------
+        # ----------------------------------------------------------
         if self.profile == PROFILE_FOUR_BUTTON:
             if not isinstance(self.buttons, dict):
                 raise ValueError("'buttons' must be a dict for four_button profile")
 
-            # entities & domain not required for four_button
+            # No further validation needed
             return
 
-        # -------------------------------------------------------
+        # ----------------------------------------------------------
         # ALL OTHER PROFILES REQUIRE DOMAIN + ENTITIES
-        # -------------------------------------------------------
+        # ----------------------------------------------------------
         if not self.entities:
-            raise ValueError("entities must be provided for paddle, five_button, and two_button profiles")
+            raise ValueError(
+                "entities must be provided for paddle, five_button, and two_button profiles"
+            )
 
-        allowed_domains = {"light", "fan", "cover"}
+        allowed_domains = {"light", "fan", "cover", "media_player"}
         if self.domain not in allowed_domains:
             raise ValueError(
                 f"Invalid domain '{self.domain}'. Must be one of: {allowed_domains}"
             )
 
-        # -------------------------------------------------------
-        # TWO BUTTON PROFILE IGNORES HOLD & RAMP CONFIG
-        # -------------------------------------------------------
+        # ----------------------------------------------------------
+        # TWO BUTTON PROFILE IGNORES RAMPING + HOLD
+        # ----------------------------------------------------------
         if self.profile == PROFILE_TWO_BUTTON:
             if self.hold_time_ms != 0:
                 _LOGGER.debug(
@@ -87,16 +92,20 @@ class PicoConfig:
                 )
 
 
+# ----------------------------------------------------------------------
+# CONFIG PARSER
+# ----------------------------------------------------------------------
+
 def parse_pico_config(raw: Dict[str, Any]) -> PicoConfig:
-    """Validate and normalize a single YAML config entry."""
+    """Normalize and validate a single YAML config entry."""
 
     if "device_id" not in raw:
-        raise ValueError("missing required key 'device_id'")
+        raise ValueError("Missing required key 'device_id'")
     device_id = raw["device_id"]
 
     profile = str(raw.get("profile", PROFILE_PADDLE)).lower()
 
-    # Entities may not exist for FOUR BUTTON
+    # Entities not required for four_button
     entities = raw.get("entities") or raw.get("entity_id") or []
 
     domain = str(raw.get("domain", "light")).lower()
