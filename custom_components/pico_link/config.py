@@ -10,7 +10,9 @@ from .const import (
     PROFILE_FOUR_BUTTON,
 )
 
-from . import _LOGGER
+import logging
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
