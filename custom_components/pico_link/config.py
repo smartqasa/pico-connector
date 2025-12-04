@@ -16,7 +16,7 @@ class PicoConfig:
     hold_time_ms: int = 300
     step_time_ms: int = 200
     step_pct: int = 5
-    brightness_on_pct: int = 100
+    on_pct: int = 100
 
     def validate(self) -> None:
         """Sanity checks based on profile type."""
@@ -52,7 +52,7 @@ def parse_pico_config(raw: Dict[str, Any]) -> PicoConfig:
     hold_time_ms = int(raw.get("hold_time_ms", 250))            # default 250 ms
     step_pct = int(raw.get("step_pct", 5))                      # default 5%
     step_time_ms = int(raw.get("step_time_ms", 200))            # default 200 ms
-    brightness_on_pct = int(raw.get("brightness_on_pct", 100))  # default 100%
+    on_pct = int(raw.get("on_pct", 100))  # default 100%
 
     if hold_time_ms < 50:
         raise ValueError("hold_time_ms must be >= 50 ms")
@@ -60,8 +60,8 @@ def parse_pico_config(raw: Dict[str, Any]) -> PicoConfig:
         raise ValueError("step_pct must be between 1 and 100")
     if step_time_ms < 50:
         raise ValueError("step_time_ms must be >= 50 ms")
-    if not (1 <= brightness_on_pct <= 100):
-        raise ValueError("brightness_on_pct must be between 1 and 100")
+    if not (1 <= on_pct <= 100):
+        raise ValueError("on_pct must be between 1 and 100")
 
     return PicoConfig(
         device_id=device_id,
@@ -70,5 +70,5 @@ def parse_pico_config(raw: Dict[str, Any]) -> PicoConfig:
         hold_time_ms=hold_time_ms,
         step_pct=step_pct,
         step_time_ms=step_time_ms,
-        brightness_on_pct=brightness_on_pct,
+        on_pct=on_pct,
     )

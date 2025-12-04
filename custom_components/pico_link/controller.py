@@ -322,12 +322,12 @@ class PicoController:
         _LOGGER.debug(
             "Device %s: ON → brightness_pct=%s for %s",
             self.conf.device_id,
-            self.conf.brightness_on_pct,
+            self.conf.on_pct,
             self.conf.entities,
         )
         await self._call_light_service(
             "turn_on",
-            {"brightness_pct": self.conf.brightness_on_pct},
+            {"brightness_pct": self.conf.on_pct},
         )
 
     async def _short_press_off(self) -> None:
