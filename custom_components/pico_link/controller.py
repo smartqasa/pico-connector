@@ -9,6 +9,7 @@ from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, callback
 from .config import PicoConfig
 from .const import (
     PROFILE_FIVE_BUTTON,
+    PROFILE_FOUR_BUTTON,
     PROFILE_PADDLE,
     PROFILE_TWO_BUTTON,
     SUPPORTED_BUTTONS,

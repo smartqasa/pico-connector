@@ -7,6 +7,7 @@ PICO_EVENT_TYPE = "lutron_caseta_button_event"
 
 # Profiles
 PROFILE_FIVE_BUTTON = "five_button"
+PROFILE_FOUR_BUTTON = "four_button"
 PROFILE_PADDLE = "paddle"
 PROFILE_TWO_BUTTON = "two_button"
 
