@@ -13,7 +13,7 @@ _LOGGER = logging.getLogger(__name__)
 class FiveButtonProfile:
     """Five-button profile:
     - ON/OFF
-    - STOP
+    - STOP (now optionally user-programmable)
     - RAISE/LOWER mapped by domain (light/fan/cover)
     """
 
@@ -32,22 +32,42 @@ class FiveButtonProfile:
     # ------------------------------------------------------------------
 
     def _handle_press_five(self, button: str) -> None:
-        # Domain-specific STOP
+        # -----------------------------------------------------------
+        # MIDDLE BUTTON (STOP) — NOW PROGRAMMABLE
+        # -----------------------------------------------------------
         if button == "stop":
+
+            # Check if the user configured a middle-button action
+            middle_action = getattr(self._ctrl.conf, "middle_button", None)
+
+            if middle_action:
+                _LOGGER.debug(
+                    "Device %s: executing custom middle button action: %s",
+                    self._ctrl.conf.device_id,
+                    middle_action,
+                )
+                asyncio.create_task(self._ctrl._execute_button_action(middle_action))
+                return
+
+            # Otherwise, fall back to legacy STOP behavior
             if self._ctrl.conf.domain == "cover":
                 asyncio.create_task(
                     self._ctrl._call_entity_service("stop_cover", {})
                 )
-            # Cancel raise/lower ramp
+
+            # Cancel raise/lower ramp tasks
             for b in ("raise", "lower"):
                 self._ctrl._pressed[b] = False
                 task = self._ctrl._tasks.get(b)
                 if task and not task.done():
                     task.cancel()
                     self._ctrl._tasks[b] = None
+
             return
 
+        # -----------------------------------------------------------
         # Standard ON/OFF
+        # -----------------------------------------------------------
         if button == "on":
             asyncio.create_task(self._ctrl._short_press_on())
             return
@@ -56,7 +76,9 @@ class FiveButtonProfile:
             asyncio.create_task(self._ctrl._short_press_off())
             return
 
+        # -----------------------------------------------------------
         # Raise/Lower mapping
+        # -----------------------------------------------------------
         if button in ("raise", "lower"):
             # COVER: simple open/close
             if self._ctrl.conf.domain == "cover":
@@ -64,9 +86,9 @@ class FiveButtonProfile:
                 asyncio.create_task(self._ctrl._call_entity_service(svc, {}))
                 return
 
-            # FAN: discrete speed steps based on configured speeds
+            # FAN: discrete speed steps
             if self._ctrl.conf.domain == "fan":
-                direction = 1 if button == "raise" else -1
+                direction = 1 if button == "raise" else - -1
                 asyncio.create_task(self._ctrl._fan_step_discrete(direction))
                 return
 
@@ -74,7 +96,7 @@ class FiveButtonProfile:
             if self._ctrl.conf.domain == "light":
                 direction = 1 if button == "raise" else -1
 
-                # Cancel any existing raise/lower tasks
+                # Cancel any existing ramp tasks
                 for b in ("raise", "lower"):
                     task = self._ctrl._tasks.get(b)
                     if task and not task.done():
