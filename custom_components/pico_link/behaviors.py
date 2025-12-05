@@ -112,17 +112,17 @@ class SharedBehaviors:
         domain = self.conf.domain
 
         #
-        # MEDIA PLAYER
-        #
-        if domain == "media_player":
-            await self._media_next()
-            return
-
-        #
         # LIGHT
         #
         if domain == "light":
             await self._call_entity_service("turn_off", {})
+            return
+
+        #
+        # MEDIA PLAYER
+        #
+        if domain == "media_player":
+            await self._media_next()
             return
 
         #
@@ -158,53 +158,6 @@ class SharedBehaviors:
         """
         service = "volume_up" if direction > 0 else "volume_down"
         await self._call_entity_service(service, {})
-
-    # ---------------------------------------------------------------------
-    # LIGHT BRIGHTNESS RAMPING (HOLD BEHAVIOR)
-    # ---------------------------------------------------------------------
-
-    async def _ramp_loop(self, direction: int, active_button: str) -> None:
-        """Repeated brightness_step_pct while held (LIGHT ONLY)."""
-
-        if self.conf.domain != "light":
-            return
-
-        step = self.conf.step_pct * direction
-
-        try:
-            while self._pressed.get(active_button, False):
-                await self._call_entity_service(
-                    "turn_on",
-                    {"brightness_step_pct": step},
-                    continue_on_error=True,
-                )
-
-                if not await self._brightness_in_range(direction):
-                    break
-
-                await asyncio.sleep(self._step_time)
-
-        except asyncio.CancelledError:
-            pass
-
-    async def _brightness_in_range(self, direction: int) -> bool:
-        if not self.conf.entities:
-            return False
-
-        state = self.hass.states.get(self.conf.entities[0])
-        if not state:
-            return False
-
-        brightness = state.attributes.get("brightness")
-        if brightness is None:
-            return True
-
-        if direction > 0 and brightness >= 254:
-            return False
-        if direction < 0 and brightness <= 1:
-            return False
-
-        return True
 
     # ---------------------------------------------------------------------
     # FAN SPEED LADDER (DISCRETE SPEED CONTROL)
