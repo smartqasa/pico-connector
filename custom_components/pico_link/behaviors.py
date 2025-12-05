@@ -211,11 +211,12 @@ class SharedBehaviors:
     # ---------------------------------------------------------------------
 
     def _get_fan_speed_ladder(self) -> list[int]:
-        speeds = getattr(self.conf, "speeds", 6) or 6
+        speeds = getattr(self.conf, "fan_speeds", 6) or 6
         if speeds not in (4, 6):
             speeds = 6
         steps = speeds - 1
         return [round(i * 100 / steps) for i in range(speeds)]
+
 
     def _get_current_fan_percentage(self) -> Optional[float]:
         if not self.conf.entities:
@@ -284,7 +285,7 @@ class SharedBehaviors:
                 domain,
                 service,
                 service_data,
-                blocking=False,
+                blocking=True,
             )
         except Exception as err:
             msg = (
@@ -317,12 +318,6 @@ class SharedBehaviors:
                 action,
             )
             return
-
-        _LOGGER.debug(
-            "FOUR_BUTTON DEBUG: Device %s executing action: %s",
-            self.conf.device_id,
-            action,
-        )
 
         try:
             domain, service = action["action"].split(".", 1)

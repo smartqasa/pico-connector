@@ -41,11 +41,6 @@ class FiveButtonProfile:
             middle_action = getattr(self._ctrl.conf, "middle_button", None)
 
             if middle_action:
-                _LOGGER.error(
-                    "Device %s: executing custom middle button action: %s",
-                    self._ctrl.conf.device_id,
-                    middle_action,
-                )
                 asyncio.create_task(self._ctrl._execute_button_action(middle_action))
                 return
 
@@ -88,25 +83,55 @@ class FiveButtonProfile:
 
             # FAN: discrete speed steps
             if self._ctrl.conf.domain == "fan":
-                direction = 1 if button == "raise" else - -1
+                direction = 1 if button == "raise" else -1
                 asyncio.create_task(self._ctrl._fan_step_discrete(direction))
                 return
 
-            # LIGHT: ramp brightness while held
+            # LIGHT: tap = step, hold = ramp
             if self._ctrl.conf.domain == "light":
                 direction = 1 if button == "raise" else -1
 
-                # Cancel any existing ramp tasks
-                for b in ("raise", "lower"):
-                    task = self._ctrl._tasks.get(b)
-                    if task and not task.done():
-                        task.cancel()
-                    self._ctrl._pressed[b] = False
+                # Cancel the OTHER direction only
+                other = "lower" if button == "raise" else "raise"
+                task = self._ctrl._tasks.get(other)
+                if task and not task.done():
+                    task.cancel()
+                self._ctrl._pressed[other] = False
 
+                # Mark THIS button as pressed
                 self._ctrl._pressed[button] = True
+
+                # Start lifecycle handler (tap vs hold)
                 self._ctrl._tasks[button] = asyncio.create_task(
-                    self._ctrl._ramp_loop(direction, button)
+                    self._press_lifecycle_five(button, direction)
                 )
+                return
+
+    async def _press_lifecycle_five(self, button: str, direction: int):
+        """
+        - Short press (< hold_time) → brightness_step_pct
+        - Long press (>= hold_time) → ramp_loop
+        """
+        try:
+            # Wait the configured hold time
+            await asyncio.sleep(self._ctrl._hold_time)
+
+            # If user released before hold threshold → short tap = step
+            if not self._ctrl._pressed.get(button, False):
+                await self._ctrl._call_entity_service(
+                    "turn_on",
+                    {"brightness_step_pct": self._ctrl.conf.step_pct * direction},
+                )
+                return
+
+            # Long hold → enter ramp
+            await self._ctrl._ramp_loop(direction, active_button=button)
+
+        except asyncio.CancelledError:
+            pass
+        finally:
+            self._ctrl._pressed[button] = False
+            self._ctrl._tasks[button] = None
 
     def _handle_release_five(self, button: str) -> None:
         if button in ("raise", "lower"):

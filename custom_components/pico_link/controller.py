@@ -88,13 +88,6 @@ class PicoController(SharedBehaviors):
         # Subscribe to bus events
         self._unsub_event = self.hass.bus.async_listen(PICO_EVENT_TYPE, _handle_event)
 
-        _LOGGER.info(
-            "PicoController started for device %s (profile=%s, domain=%s)",
-            self.conf.device_id,
-            self.conf.profile,
-            getattr(self.conf, "domain", None),
-        )
-
     def async_stop(self) -> None:
         """Stop listening and cancel tasks."""
         if self._unsub_event:
