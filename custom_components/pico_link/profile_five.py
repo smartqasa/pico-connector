@@ -75,6 +75,20 @@ class FiveButtonProfile:
         # Raise/Lower mapping
         # -----------------------------------------------------------
         if button in ("raise", "lower"):
+
+            # LIGHT: tap = step, hold = ramp
+            if self._ctrl.conf.domain == "light":
+                direction = 1 if button == "raise" else -1
+
+                # Mark THIS button as pressed
+                self._ctrl._pressed[button] = True
+
+                # Start lifecycle handler (tap vs hold)
+                self._ctrl._tasks[button] = asyncio.create_task(
+                    self._press_lifecycle_five(button, direction)
+                )
+                return
+
             # COVER: simple open/close
             if self._ctrl.conf.domain == "cover":
                 svc = "open_cover" if button == "raise" else "close_cover"
@@ -87,25 +101,7 @@ class FiveButtonProfile:
                 asyncio.create_task(self._ctrl._fan_step_discrete(direction))
                 return
 
-            # LIGHT: tap = step, hold = ramp
-            if self._ctrl.conf.domain == "light":
-                direction = 1 if button == "raise" else -1
 
-                # Cancel the OTHER direction only
-                other = "lower" if button == "raise" else "raise"
-                task = self._ctrl._tasks.get(other)
-                if task and not task.done():
-                    task.cancel()
-                self._ctrl._pressed[other] = False
-
-                # Mark THIS button as pressed
-                self._ctrl._pressed[button] = True
-
-                # Start lifecycle handler (tap vs hold)
-                self._ctrl._tasks[button] = asyncio.create_task(
-                    self._press_lifecycle_five(button, direction)
-                )
-                return
 
     async def _press_lifecycle_five(self, button: str, direction: int):
         """

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, Mapping, Optional, Tuple
 
-from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, callback
+from homeassistant.core import Event, HomeAssistant, callback
 
 from .config import PicoConfig
 from .const import (

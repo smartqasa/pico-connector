@@ -92,7 +92,6 @@ class PicoConfig:
                     self.device_id,
                 )
 
-
 # ----------------------------------------------------------------------
 # CONFIG PARSER
 # ----------------------------------------------------------------------
@@ -128,8 +127,8 @@ def parse_pico_config(raw: Dict[str, Any]) -> PicoConfig:
         step_time_ms=step_time_ms,
         step_pct=step_pct,
         on_pct=on_pct,
-        middle_button=middle_button,
         fan_speeds=fan_speeds,
+        middle_button=middle_button,
         buttons=buttons,
     )
 
