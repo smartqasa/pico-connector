@@ -300,8 +300,25 @@ class SharedBehaviors:
     # FOUR-BUTTON ACTION EXECUTOR
     # ---------------------------------------------------------------------
 
-    async def _execute_button_action(self, action: Dict[str, Any]) -> None:
-        _LOGGER.warning(
+    async def _execute_button_action(self, action: Dict[str, Any] | list) -> None:
+        # ------------------------------------------------------------
+        # NEW: Support lists of actions
+        # ------------------------------------------------------------
+        if isinstance(action, list):
+            for a in action:
+                await self._execute_button_action(a)
+            return
+
+        # Must be a dict from here on
+        if not isinstance(action, dict):
+            _LOGGER.error(
+                "Device %s: invalid action format (expected dict or list): %s",
+                self.conf.device_id,
+                action,
+            )
+            return
+
+        _LOGGER.debug(
             "FOUR_BUTTON DEBUG: Device %s executing action: %s",
             self.conf.device_id,
             action,
