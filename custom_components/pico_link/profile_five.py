@@ -133,11 +133,15 @@ class FiveButtonProfile:
     # ------------------------------------------------------------------
     async def _ramp_with_min_limit(self, button: str, direction: int):
         """
-        This is the 5-button-specific wrapper around SharedBehaviors._ramp_loop.
-        It prevents ramping below the lowest configured step level.
+        Ramping logic that stops dimming at low_pct.
+        Only used for 5-button Pico.
         """
         step_pct = self._ctrl.conf.step_pct
-        min_brightness = round(254 * (step_pct / 100))
+        low_pct = self._ctrl.conf.low_pct
+
+        # Convert percentages → brightness scale (0–254)
+        step_value = round(254 * (step_pct / 100))
+        min_brightness = round(254 * (low_pct / 100))
         if min_brightness < 1:
             min_brightness = 1
 
@@ -147,30 +151,26 @@ class FiveButtonProfile:
                 # Get current brightness
                 entity_id = self._ctrl.conf.entities[0]
                 state = self._ctrl.hass.states.get(entity_id)
-                
+
                 if state is None:
                     break
-                
-                brightness = state.attributes.get("brightness", None)
 
+                brightness = state.attributes.get("brightness")
                 if brightness is None:
                     break
 
-                # Check BEFORE applying the next step
-                step_value = round(254 * (step_pct / 100))
-
-                if direction < 0:  # dimming
+                # Predict next brightness BEFORE applying the step
+                if direction < 0:  # Dimming
                     next_brightness = brightness - step_value
                     if next_brightness < min_brightness:
-                        # STOP BEFORE overshoot
                         break
 
-                if direction > 0:  # brightening
+                if direction > 0:  # Brightening
                     next_brightness = brightness + step_value
                     if next_brightness > 254:
                         break
 
-                # Apply the step
+                # Apply one brightness step
                 await self._ctrl._call_entity_service(
                     "turn_on",
                     {"brightness_step_pct": step_pct * direction},
@@ -181,6 +181,7 @@ class FiveButtonProfile:
 
         except asyncio.CancelledError:
             pass
+
 
     # ------------------------------------------------------------------
     # RELEASE
