@@ -104,6 +104,13 @@ class PicoController(SharedBehaviors):
         # Reset pressed state
         self._pressed = {btn: False for btn in SUPPORTED_BUTTONS}
 
+    def unregister_listeners(self):
+        """Remove HA event listeners when unloading or reloading."""
+        if self._unsub_event:
+            self._unsub_event()
+            self._unsub_event = None
+
+
     # ---------------------------------------------------------------------
     # Event payload mapping
     # ---------------------------------------------------------------------
