@@ -41,7 +41,7 @@ class FiveButtonProfile:
             middle_action = getattr(self._ctrl.conf, "middle_button", None)
 
             if middle_action:
-                _LOGGER.debug(
+                _LOGGER.error(
                     "Device %s: executing custom middle button action: %s",
                     self._ctrl.conf.device_id,
                     middle_action,
