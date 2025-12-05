@@ -238,7 +238,7 @@ class SharedBehaviors:
                 domain,
                 service,
                 service_data,
-                blocking=True,
+                blocking=False,
             )
         except Exception as err:
             msg = (
