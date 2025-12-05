@@ -121,7 +121,7 @@ class FiveButtonProfile:
                 return
 
             # HOLD → ramp
-            await self._ramp(button, direction)
+            await self._ramp(button, direction, token)
 
         except asyncio.CancelledError:
             pass
@@ -133,31 +133,52 @@ class FiveButtonProfile:
     # -------------------------------------------------------------
     # Ramp with low_pct stop
     # -------------------------------------------------------------
-    async def _ramp(self, button: str, direction: int):
+    async def _ramp(self, button: str, direction: int, my_token: int):
         step_pct = self._ctrl.conf.step_pct
         low_pct = self._ctrl.conf.low_pct
 
-        step_value = round(254 * (step_pct / 100))
-        min_brightness = max(1, round(254 * (low_pct / 100)))
+        # Convert step and low_pct to 0–255 brightness scale
+        step_value = round(255 * (step_pct / 100))
+        min_brightness = max(1, round(255 * (low_pct / 100)))
 
         try:
             while self._ctrl._pressed.get(button, False):
+
+                # TOKEN CHECK — CRITICAL SAFETY
+                if my_token != self._ctrl._press_tokens[button]:
+                    return
+
                 entity_id = self._ctrl.conf.entities[0]
                 state = self._ctrl.hass.states.get(entity_id)
                 if not state:
-                    break
+                    return
 
                 b = state.attributes.get("brightness")
                 if b is None:
-                    break
+                    return
 
-                # pre-check
-                if direction < 0 and b - step_value < min_brightness:
-                    break
-                if direction > 0 and b + step_value > 254:
-                    break
+                # ----------- PRE-CHECK FOR STOP CONDITIONS -----------
+                if direction < 0:
+                    next_b = b - step_value
+                    if next_b < min_brightness:
+                        await self._ctrl._call_entity_service(
+                            "turn_on",
+                            {"brightness": min_brightness},
+                            continue_on_error=True,
+                        )
+                        return
 
-                # apply step
+                if direction > 0:
+                    next_b = b + step_value
+                    if next_b > 255:
+                        await self._ctrl._call_entity_service(
+                            "turn_on",
+                            {"brightness": 255},
+                            continue_on_error=True,
+                        )
+                        return
+
+                # ----------- APPLY STEP -----------
                 await self._ctrl._call_entity_service(
                     "turn_on",
                     {"brightness_step_pct": step_pct * direction},
@@ -168,3 +189,5 @@ class FiveButtonProfile:
 
         except asyncio.CancelledError:
             pass
+
+
