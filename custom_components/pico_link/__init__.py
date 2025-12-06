@@ -63,11 +63,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     # ------------------------------------------------------------
     for idx, device_raw in enumerate(device_list, start=1):
 
-        # Merge DEFAULTS → device overrides
-        merged = {**defaults, **device_raw}
-
         try:
-            pico_conf: PicoConfig = parse_pico_config(hass, merged)
+            pico_conf: PicoConfig = parse_pico_config(hass, defaults, device_raw)
         except ValueError as err:
             _LOGGER.error(
                 "Invalid pico_link config at entry %s (device_id=%s): %s",
