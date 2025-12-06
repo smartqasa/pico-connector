@@ -120,7 +120,7 @@ def parse_pico_config(raw: Dict[str, Any]) -> PicoConfig:
         entities=entities,
         domain=str(raw.get("domain", "light")).lower(),
         hold_time_ms=int(raw.get("hold_time_ms", 250)),
-        step_time_ms=int(raw.get("step_time_ms", 250)),
+        step_time_ms=int(raw.get("step_time_ms", 50)),
         step_pct=int(raw.get("step_pct", 10)),
         low_pct=int(raw.get("low_pct", 1)),
         on_pct=int(raw.get("on_pct", 100)),
@@ -170,14 +170,14 @@ def parse_pico_config(raw: Dict[str, Any]) -> PicoConfig:
 
                 # Case 2: entity_id is list containing "device_entity"
                 elif isinstance(eid, list) and "device_entity" in eid:
-                    replaced: list[str] = []
+                    replaced = []
                     for x in eid:
                         if x == "device_entity":
-                            # splice in all device entities
-                            replaced.extend(conf.entities)
+                            replaced.extend(conf.entities)  # expand inline
                         else:
                             replaced.append(x)
                     new_action["target"] = {"entity_id": replaced}
+
 
 
             fixed_actions.append(new_action)

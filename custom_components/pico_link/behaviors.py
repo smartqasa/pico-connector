@@ -202,7 +202,7 @@ class SharedBehaviors:
                     continue_on_error=True,
                 )
 
-                #await asyncio.sleep(self._step_time)
+                await asyncio.sleep(self._step_time)
 
         except asyncio.CancelledError:
             return
