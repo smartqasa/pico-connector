@@ -6,7 +6,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List
 
+from homeassistant.helpers import device_registry as dr
 import logging
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -18,25 +20,22 @@ class PicoConfig:
     """
     A normalized configuration object for a single Pico device.
 
-    NOTE:
-    Defaults are applied from THREE layers:
-        1. Hardcoded dataclass defaults (lowest priority)
-        2. Global defaults block from configuration.yaml
-        3. Per-device overrides in configuration.yaml (highest priority)
-
     IMPORTANT:
-    Device "type" / behavior is NO LONGER derived from YAML "profile".
-    The controller now auto-detects behavior from Lutron event payload:
-        data["type"] → "Pico3ButtonRaiseLower" / "Pico4ButtonScene" / etc.
+    Device behavior is auto-detected dynamically from the Lutron
+    event payload ("type": "Pico3ButtonRaiseLower", etc.).
+    YAML no longer controls "profile" or type.
     """
 
+    # Resolved device_id (UUID from HA device registry)
     device_id: str
+
+    # Auto-detected at runtime by controller (optional)
     behavior: str | None = None
 
-    # Primary entities controlled by the device
+    # Entities controlled by this Pico
     entities: List[str] = field(default_factory=list)
 
-    # Domain of the controlled entity (light, fan, cover, media_player)
+    # Domain (light, fan, cover, media_player)
     domain: str = "light"
 
     # Timing / ramp parameters
@@ -46,24 +45,24 @@ class PicoConfig:
     low_pct: int = 1
     on_pct: int = 100
 
-    # Fan parameters
+    # Fan
     fan_speeds: int = 6
 
-    # Middle button (STOP) formatted action list
+    # STOP button custom action
     middle_button: List[Dict[str, Any]] = field(default_factory=list)
 
     # Four-button scene actions (if applicable)
     buttons: Dict[str, List[Dict]] = field(default_factory=dict)
 
     # ------------------------------------------------------------
-    # VALIDATION — MINIMAL NOW THAT PROFILES ARE GONE
+    # VALIDATION — Very minimal now that profiles are removed
     # ------------------------------------------------------------
     def validate(self) -> None:
 
-        # Entities must be present for all devices EXCEPT 4-button:
+        # Must have either entities or buttons
         if not self.entities and not self.buttons:
             raise ValueError(
-                f"Device {self.device_id} has no 'entities' AND no 'buttons'. "
+                f"Device {self.device_id} has no 'entities' OR 'buttons'. "
                 "At least one must be provided."
             )
 
@@ -71,27 +70,74 @@ class PicoConfig:
         if self.domain not in allowed_domains:
             raise ValueError(
                 f"Invalid domain '{self.domain}' for device {self.device_id}. "
-                f"Must be one of {allowed_domains}"
+                f"Must be one of: {allowed_domains}"
             )
 
-        # Nothing else to validate now.
+
+# ================================================================
+# DEVICE LOOKUP — name_by_user FIRST, then name
+# ================================================================
+def lookup_device_id(hass, name: str) -> str | None:
+    """Return device_id matching name_by_user first, then name."""
+    dev_reg = dr.async_get(hass)
+
+    # Priority 1: user-assigned name
+    for device in dev_reg.devices.values():
+        if device.name_by_user == name:
+            return device.id
+
+    # Priority 2: integration-provided name
+    for device in dev_reg.devices.values():
+        if device.name == name:
+            return device.id
+
+    return None
 
 
 # ================================================================
 # CONFIG PARSER — MERGES DEFAULTS + DEVICE OVERRIDES
 # ================================================================
-def parse_pico_config(raw: Dict[str, Any]) -> PicoConfig:
+def parse_pico_config(hass, raw: Dict[str, Any]) -> PicoConfig:
+    """
+    device_id priority:
+        1. YAML device_id (explicit)
+        2. device lookup from name_by_user / name
+    """
 
-    if "device_id" not in raw:
-        raise ValueError("Missing required key 'device_id'")
+    # ------------------------------------------------------------
+    # Resolve device_id
+    # ------------------------------------------------------------
+    device_id = raw.get("device_id")
 
-    device_id = raw["device_id"]
+    if not device_id:
+        name = raw.get("name")
+        if not name:
+            raise ValueError(
+                "Each Pico device must define either 'device_id' or 'name'."
+            )
 
-    # entities or legacy entity_id:
+        device_id = lookup_device_id(hass, name)
+        if not device_id:
+            raise ValueError(
+                f"No device found with name_by_user or name '{name}'."
+            )
+
+        _LOGGER.debug(
+            "Resolved Pico '%s' → device_id %s",
+            name,
+            device_id,
+        )
+
+    # ------------------------------------------------------------
+    # Entity normalization
+    # ------------------------------------------------------------
     entities = raw.get("entities") or raw.get("entity_id") or []
     if isinstance(entities, str):
         entities = [entities]
 
+    # ------------------------------------------------------------
+    # Build PicoConfig
+    # ------------------------------------------------------------
     conf = PicoConfig(
         device_id=device_id,
         entities=entities,
@@ -106,9 +152,9 @@ def parse_pico_config(raw: Dict[str, Any]) -> PicoConfig:
         buttons=raw.get("buttons", {}),
     )
 
-    # -------------------------------------------------------------
-    # DEBUG: before rewrite (if any)
-    # -------------------------------------------------------------
+    # ------------------------------------------------------------
+    # DEBUG
+    # ------------------------------------------------------------
     _LOGGER.debug(
         "PICO[%s] RAW middle_button BEFORE REWRITE → %s",
         device_id,
@@ -116,11 +162,8 @@ def parse_pico_config(raw: Dict[str, Any]) -> PicoConfig:
     )
 
     # ============================================================
-    # OPTIONAL TARGET AUTO-INJECTION
-    # Only rewrite if user explicitly used 'device_entity'.
-    # No more profile gating — controller behavior handles STOP logic.
+    # AUTO-INJECT ENTITY: replace entity_id: device_entity
     # ============================================================
-
     fixed_actions: List[Dict[str, Any]] = []
 
     for action in conf.middle_button:
@@ -133,33 +176,35 @@ def parse_pico_config(raw: Dict[str, Any]) -> PicoConfig:
 
         target = new_action.get("target")
         if isinstance(target, dict):
+
             eid = target.get("entity_id")
 
+            # Replace a single device_entity
             if isinstance(eid, str) and eid == "device_entity":
                 new_action["target"] = {"entity_id": conf.entities}
 
+            # Replace inside a list
             elif isinstance(eid, list) and "device_entity" in eid:
-                replaced: list[str] = []
+                new_list = []
                 for x in eid:
                     if x == "device_entity":
-                        replaced.extend(conf.entities)
+                        new_list.extend(conf.entities)
                     else:
-                        replaced.append(x)
-                new_action["target"] = {"entity_id": replaced}
+                        new_list.append(x)
+                new_action["target"] = {"entity_id": new_list}
 
         fixed_actions.append(new_action)
 
     conf.middle_button = fixed_actions
 
-    # -------------------------------------------------------------
-    # DEBUG: after rewrite
-    # -------------------------------------------------------------
     _LOGGER.debug(
         "PICO[%s] FINAL middle_button AFTER REWRITE → %s",
         device_id,
         conf.middle_button,
     )
 
+    # ------------------------------------------------------------
     # Validate and return
+    # ------------------------------------------------------------
     conf.validate()
     return conf
