@@ -6,7 +6,7 @@ DOMAIN = "pico_link"
 PICO_EVENT_TYPE = "lutron_caseta_button_event"
 
 # Map Lutron's event "type" → internal logical category
-LUTRON_TYPE_MAP = {
+PICO_TYPE_MAP = {
     "Pico3ButtonRaiseLower": "five_button",
     "Pico4ButtonScene":      "four_button",
     "PaddleSwitchPico":      "paddle",

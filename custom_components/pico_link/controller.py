@@ -9,7 +9,7 @@ from .config import PicoConfig
 from .const import (
     SUPPORTED_BUTTONS,
     PICO_EVENT_TYPE,
-    LUTRON_TYPE_MAP,
+    PICO_TYPE_MAP,
 )
 from .behaviors import SharedBehaviors
 
@@ -79,7 +79,7 @@ class PicoController(SharedBehaviors):
                     )
                     return
 
-                normalized = LUTRON_TYPE_MAP.get(device_type_raw)
+                normalized = PICO_TYPE_MAP.get(device_type_raw)
                 if not normalized:
                     _LOGGER.error(
                         "Device %s: unknown Pico type '%s'",

@@ -31,9 +31,6 @@ class PicoConfig:
     """
 
     device_id: str
-
-    # The device "type" (five_button, four_button, paddle, two_button)
-    # is now determined dynamically by the controller, not stored in config.
     behavior: str | None = None
 
     # Primary entities controlled by the device
