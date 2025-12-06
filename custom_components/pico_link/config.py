@@ -129,6 +129,15 @@ def parse_pico_config(raw: Dict[str, Any]) -> PicoConfig:
         buttons=raw.get("buttons", {}),
     )
 
+    # -------------------------------------------------------------
+    # DEBUG LOG (before rewrite)
+    # -------------------------------------------------------------
+    _LOGGER.warning(
+        "PICO[%s] RAW middle_button BEFORE REWRITE → %s",
+        device_id,
+        raw.get("middle_button"),
+    )
+
     # ============================================================
     # AUTO-INJECT / REPLACE TARGET ENTITY FOR MIDDLE BUTTON
     # ============================================================
@@ -181,6 +190,16 @@ def parse_pico_config(raw: Dict[str, Any]) -> PicoConfig:
             fixed_actions.append(new_action)
 
         conf.middle_button = fixed_actions
+
+    # -------------------------------------------------------------
+    # DEBUG LOG (after rewrite)
+    # -------------------------------------------------------------
+    _LOGGER.warning(
+        "PICO[%s] FINAL middle_button AFTER REWRITE → %s",
+        device_id,
+        conf.middle_button,
+    )
+
 
     # Final correctness check
     conf.validate()
