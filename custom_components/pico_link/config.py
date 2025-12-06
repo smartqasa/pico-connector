@@ -132,7 +132,7 @@ def parse_pico_config(raw: Dict[str, Any]) -> PicoConfig:
     # -------------------------------------------------------------
     # DEBUG LOG (before rewrite)
     # -------------------------------------------------------------
-    _LOGGER.warning(
+    _LOGGER.error(
         "PICO[%s] RAW middle_button BEFORE REWRITE → %s",
         device_id,
         raw.get("middle_button"),
@@ -194,7 +194,7 @@ def parse_pico_config(raw: Dict[str, Any]) -> PicoConfig:
     # -------------------------------------------------------------
     # DEBUG LOG (after rewrite)
     # -------------------------------------------------------------
-    _LOGGER.warning(
+    _LOGGER.error(
         "PICO[%s] FINAL middle_button AFTER REWRITE → %s",
         device_id,
         conf.middle_button,
