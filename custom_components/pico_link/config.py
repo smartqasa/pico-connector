@@ -40,7 +40,7 @@ class PicoConfig:
 
     # Timing / ramp parameters
     hold_time_ms: int = 250
-    step_time_ms: int = 250
+    step_time_ms: int = 500
     step_pct: int = 10
     low_pct: int = 1
     on_pct: int = 100
@@ -143,7 +143,7 @@ def parse_pico_config(hass, raw: Dict[str, Any]) -> PicoConfig:
         entities=entities,
         domain=str(raw.get("domain", "light")).lower(),
         hold_time_ms=int(raw.get("hold_time_ms", 250)),
-        step_time_ms=int(raw.get("step_time_ms", 250)),
+        step_time_ms=int(raw.get("step_time_ms", 500)),
         step_pct=int(raw.get("step_pct", 10)),
         low_pct=int(raw.get("low_pct", 1)),
         on_pct=int(raw.get("on_pct", 100)),
