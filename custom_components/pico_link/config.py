@@ -36,30 +36,23 @@ class PicoConfig:
     profile: str
     entities: List[str]
 
-    # Behavior domain: determines ON/OFF actions, ramping, etc.
     domain: str = "light"
 
-    # Hold/tap timing
     hold_time_ms: int = 250
     step_time_ms: int = 250
     step_pct: int = 10
-    low_pct: int = 1        # minimum % permitted when dimming
-    on_pct: int = 100       # "turn on" default brightness %
+    low_pct: int = 1
+    on_pct: int = 100
 
-    # Optional fan behavior
-    fan_speeds: int = 6     # valid: 4 or 6
+    fan_speeds: int = 6
 
-    # Five-button middle-button action list
     middle_button: List[Dict[str, Any]] = field(default_factory=list)
-
-    # Four-button "buttons:" action maps
     buttons: Dict[str, List[Dict]] = field(default_factory=dict)
 
     # ------------------------------------------------------------
     # VALIDATION — Ensures a proper Pico configuration
     # ------------------------------------------------------------
     def validate(self) -> None:
-        """Validate the config according to Pico profile rules."""
 
         allowed_profiles = {
             PROFILE_PADDLE,
@@ -73,18 +66,13 @@ class PicoConfig:
                 f"Invalid profile '{self.profile}'. Must be one of {allowed_profiles}"
             )
 
-        # --------------------------------------------------------
-        # FOUR-BUTTON PROFILE — special case
-        # --------------------------------------------------------
+        # FOUR-BUTTON special case
         if self.profile == PROFILE_FOUR_BUTTON:
-            # Four-button mode does NOT require domain or entities
             if not isinstance(self.buttons, dict):
                 raise ValueError("'buttons' must be a dict for four_button profile")
             return
 
-        # --------------------------------------------------------
-        # ALL OTHER PROFILES REQUIRE ENTITIES
-        # --------------------------------------------------------
+        # All other profiles require entities
         if not self.entities:
             raise ValueError(
                 "entities must be provided for paddle, five_button, and two_button profiles"
@@ -96,9 +84,7 @@ class PicoConfig:
                 f"Invalid domain '{self.domain}'. Must be one of {allowed_domains}"
             )
 
-        # --------------------------------------------------------
-        # TWO-BUTTON PROFILE — no ramping, no hold
-        # --------------------------------------------------------
+        # Two-button: no hold/ramp
         if self.profile == PROFILE_TWO_BUTTON:
             if self.hold_time_ms != 0:
                 _LOGGER.debug(
@@ -116,16 +102,6 @@ class PicoConfig:
 # CONFIG PARSER — MERGES DEFAULTS + DEVICE OVERRIDES
 # ================================================================
 def parse_pico_config(raw: Dict[str, Any]) -> PicoConfig:
-    """
-    Convert a merged config dictionary into a PicoConfig object.
-
-    IMPORTANT:
-    - raw must ALREADY be merged: {**defaults, **device_override}
-    - This function performs:
-        → normalization
-        → type conversion
-        → validation (via PicoConfig.validate)
-    """
 
     if "device_id" not in raw:
         raise ValueError("Missing required key 'device_id'")
@@ -133,7 +109,7 @@ def parse_pico_config(raw: Dict[str, Any]) -> PicoConfig:
     device_id = raw["device_id"]
     profile = str(raw.get("profile", PROFILE_PADDLE)).lower()
 
-    # Accept "entities:" or legacy "entity_id:"
+    # entities or legacy entity_id:
     entities = raw.get("entities") or raw.get("entity_id") or []
     if isinstance(entities, str):
         entities = [entities]
@@ -153,30 +129,62 @@ def parse_pico_config(raw: Dict[str, Any]) -> PicoConfig:
         buttons=raw.get("buttons", {}),
     )
 
-    # ------------------------------------------------------------
-    # AUTO-INJECT TARGET INTO MIDDLE BUTTON ACTIONS (if missing)
-    # ------------------------------------------------------------
+    # ============================================================
+    # AUTO-INJECT / REPLACE TARGET ENTITY FOR MIDDLE BUTTON
+    # ============================================================
     #
-    # Only applies to profiles that use middle_button (five_button)
-    # AND only if user did not manually supply "target".
+    # NEW LOGIC:
+    # If an action defines:
+    #
+    #     target:
+    #       entity_id: device_entity
+    #
+    # Then replace "device_entity" with the actual device's entities.
+    #
+    # Works for:
+    #   - entity_id: "device_entity"
+    #   - entity_id: ["device_entity"]
+    #   - entity_id: ["device_entity", "other"]
+    #
+    # ============================================================
 
     if conf.profile == PROFILE_FIVE_BUTTON and conf.entities:
+
         fixed_actions = []
         for action in conf.middle_button:
+
             if not isinstance(action, dict):
-                continue  # ignore malformed items
+                fixed_actions.append(action)
+                continue
 
-            # If action already specifies target → leave it alone
-            if "target" not in action:
-                action = dict(action)  # shallow copy
-                action["target"] = {"entity_id": conf.entities}
+            new_action = dict(action)
 
-            fixed_actions.append(action)
+            target = new_action.get("target")
+            if isinstance(target, dict):
+
+                eid = target.get("entity_id")
+
+                # Case 1: entity_id == "device_entity"
+                if isinstance(eid, str) and eid == "device_entity":
+                    new_action["target"] = {"entity_id": conf.entities}
+
+                # Case 2: entity_id is list containing "device_entity"
+                elif isinstance(eid, list) and "device_entity" in eid:
+                    replaced: list[str] = []
+                    for x in eid:
+                        if x == "device_entity":
+                            # splice in all device entities
+                            replaced.extend(conf.entities)
+                        else:
+                            replaced.append(x)
+                    new_action["target"] = {"entity_id": replaced}
+
+
+            fixed_actions.append(new_action)
 
         conf.middle_button = fixed_actions
 
     # Final correctness check
     conf.validate()
     return conf
-
 
