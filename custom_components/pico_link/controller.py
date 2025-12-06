@@ -40,17 +40,6 @@ class PicoController(SharedBehaviors):
             PROFILE_FOUR_BUTTON: FourButtonProfile(self),
         }
 
-        # Central press tokens for debouncing stale tasks
-        self._press_tokens = {btn: 0 for btn in SUPPORTED_BUTTONS}
-
-    # ---------------------------------------------------------
-    # TOKEN GENERATION
-    # ---------------------------------------------------------
-    def new_press_token(self, button: str) -> int:
-        """Increment and return a unique token for this button press."""
-        self._press_tokens[button] += 1
-        return self._press_tokens[button]
-
     # ---------------------------------------------------------
     # START LISTENING
     # ---------------------------------------------------------
@@ -91,12 +80,11 @@ class PicoController(SharedBehaviors):
                 # ------------------------------
                 # Standardized dispatch model:
                 # ------------------------------
-                # Press   → handle_press(button, token)
+                # Press   → handle_press(button)
                 # Release → handle_release(button)
                 # ------------------------------
                 if action == "press":
-                    token = self.new_press_token(button)
-                    profile_obj.handle_press(button, token)
+                    profile_obj.handle_press(button)
                 else:
                     profile_obj.handle_release(button)
 

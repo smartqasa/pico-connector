@@ -19,8 +19,7 @@ class PaddleProfile:
     # ------------------------------------------------------------------
     # ENTRY POINTS CALLED BY PicoController
     # ------------------------------------------------------------------
-    def handle_press(self, button: str, token: int) -> None:
-        """Called for every press. Token ensures lifecycle validity."""
+    def handle_press(self, button: str) -> None:
         if button not in ("on", "off"):
             return
 
@@ -34,7 +33,7 @@ class PaddleProfile:
 
         # Start lifecycle
         self._ctrl._tasks[button] = asyncio.create_task(
-            self._press_lifecycle(button, token)
+            self._press_lifecycle(button)
         )
 
     def handle_release(self, button: str) -> None:
@@ -50,12 +49,9 @@ class PaddleProfile:
     # ------------------------------------------------------------------
     # TAP / HOLD LIFECYCLE
     # ------------------------------------------------------------------
-    async def _press_lifecycle(self, button: str, token: int):
+    async def _press_lifecycle(self, button: str):
         try:
             await asyncio.sleep(self._ctrl._hold_time)
-
-            if token != self._ctrl._press_tokens[button]:
-                return
 
             # TAP
             if not self._ctrl._pressed.get(button, False):
@@ -68,7 +64,7 @@ class PaddleProfile:
             # HOLD – only lights ramp
             if self._ctrl.conf.domain == "light":
                 direction = 1 if button == "on" else -1
-                await self._ctrl._ramp(button, direction, token)
+                await self._ctrl._ramp(button, direction)
             else:
                 # Non-light → treat hold as tap
                 if button == "on":

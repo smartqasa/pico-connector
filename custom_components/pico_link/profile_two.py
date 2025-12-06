@@ -15,7 +15,7 @@ class TwoButtonProfile:
     def __init__(self, controller: "PicoController") -> None:
         self._ctrl = controller
 
-    def handle_press(self, button: str, token: int) -> None:
+    def handle_press(self, button: str) -> None:
         if button == "on":
             asyncio.create_task(self._ctrl._short_press_on())
         elif button == "off":

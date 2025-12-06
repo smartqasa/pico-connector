@@ -7,7 +7,7 @@ class PicoProfile(Protocol):
     can call them without type checker errors.
     """
 
-    def handle_press(self, button: str, token: int) -> None:
+    def handle_press(self, button: str) -> None:
         ...
 
     def handle_release(self, button: str) -> None:

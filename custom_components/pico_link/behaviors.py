@@ -27,9 +27,6 @@ class SharedBehaviors:
             btn: None for btn in SUPPORTED_BUTTONS
         }
 
-        # Press tokens (incremented per press)
-        self._press_tokens: Dict[str, int] = {btn: 0 for btn in SUPPORTED_BUTTONS}
-
         # Timestamps
         self._last_press_ts: Dict[str, float] = {btn: 0.0 for btn in SUPPORTED_BUTTONS}
         self._unsub_event: Optional[CALLBACK_TYPE] = None
@@ -146,7 +143,7 @@ class SharedBehaviors:
     # =====================================================================
     #  UNIFIED RAMP LOGIC (used by Paddle & FiveButton)
     # =====================================================================
-    async def _ramp(self, button: str, direction: int, token: int):
+    async def _ramp(self, button: str, direction: int):
         """
         Unified ramp behavior for all profiles.
         direction: +1 brighten, -1 dim
@@ -162,11 +159,6 @@ class SharedBehaviors:
 
         try:
             while self._pressed.get(button, False):
-
-                # Abort if replaced by a newer press
-                if token != self._press_tokens[button]:
-                    return
-
                 # Read brightness
                 if not self.conf.entities:
                     return

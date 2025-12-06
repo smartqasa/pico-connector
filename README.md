@@ -133,7 +133,6 @@ Each Pico model uses a dedicated behavior profile.
   - at brightness limits (0 / 255)
   - at configured `low_pct` minimum
   - when the button is released
-  - when a new press occurs (token safety)
 
 ---
 
@@ -153,7 +152,6 @@ Buttons:
     - release
     - min/max brightness reached
     - low-pct boundary reached
-    - stale token detected
 
 ---
 
@@ -272,7 +270,6 @@ pico_link:
 
 - Ultra-fast async handling
 - Reliable long-press detection
-- Token-based prevention of stale ramp tasks
 - Behavior matches real Lutron dimmers
 - No automations to maintain
 - Centralized configuration

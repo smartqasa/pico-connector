@@ -18,7 +18,7 @@ class FourButtonProfile:
     def __init__(self, controller: "PicoController") -> None:
         self._ctrl = controller
 
-    def handle_press(self, button: str, token: int) -> None:
+    def handle_press(self, button: str) -> None:
         if button not in FOUR_BUTTON_TYPES:
             return
 

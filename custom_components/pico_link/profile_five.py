@@ -23,7 +23,7 @@ class FiveButtonProfile:
     # -------------------------------------------------------------
     # ENTRY POINTS
     # -------------------------------------------------------------
-    def handle_press(self, button: str, token: int) -> None:
+    def handle_press(self, button: str) -> None:
         if button == "stop":
             self._handle_stop()
             return
@@ -37,7 +37,7 @@ class FiveButtonProfile:
             return
 
         if button in ("raise", "lower"):
-            self._handle_raise_lower(button, token)
+            self._handle_raise_lower(button)
 
     def handle_release(self, button: str) -> None:
         if button in ("raise", "lower"):
@@ -73,7 +73,7 @@ class FiveButtonProfile:
     # -------------------------------------------------------------
     # RAISE / LOWER PRESS
     # -------------------------------------------------------------
-    def _handle_raise_lower(self, button: str, token: int) -> None:
+    def _handle_raise_lower(self, button: str) -> None:
         direction = 1 if button == "raise" else -1
         domain = self._ctrl.conf.domain
 
@@ -91,7 +91,7 @@ class FiveButtonProfile:
 
             # start lifecycle
             self._ctrl._tasks[button] = asyncio.create_task(
-                self._light_lifecycle(button, direction, token)
+                self._light_lifecycle(button, direction)
             )
             return
 
@@ -108,20 +108,16 @@ class FiveButtonProfile:
     # -------------------------------------------------------------
     # TAP/HOLD lifecycle (raise/lower)
     # -------------------------------------------------------------
-    async def _light_lifecycle(self, button: str, direction: int, token: int):
+    async def _light_lifecycle(self, button: str, direction: int):
         try:
             await asyncio.sleep(self._ctrl._hold_time)
-
-            # stale press?
-            if token != self._ctrl._press_tokens[button]:
-                return
 
             # released before hold → tap already done
             if not self._ctrl._pressed.get(button, False):
                 return
 
             # HOLD → ramp
-            await self._ctrl._ramp(button, direction, token)
+            await self._ctrl._ramp(button, direction)
 
         except asyncio.CancelledError:
             pass
