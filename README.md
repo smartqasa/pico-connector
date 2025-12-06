@@ -26,10 +26,10 @@ lifecycles with hold detection, ramping, and tap logic.
 
 Supported Pico types:
 
-- Paddle Pico
 - 5-Button Pico
 - 4-Button “Scene” Pico
 - 2-Button Pico
+- Paddle Pico
 
 All behavior is profile-specific and tuned to perform like native Lutron dimmers
 whenever possible.

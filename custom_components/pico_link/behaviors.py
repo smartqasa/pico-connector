@@ -41,104 +41,139 @@ class SharedBehaviors:
 
     async def _short_press_on(self) -> None:
         domain = self.conf.domain
-        
-        #
-        # LIGHT
-        #
-        if domain == "light":
-            await self._call_entity_service(
-                "turn_on",
-                {"brightness_pct": self.conf.on_pct},
-            )
-            return
 
-        #
-        # MEDIA PLAYER
-        #
-        if domain == "media_player":
-            await self._media_play_pause()
-            return
+        match domain:
 
-        #
-        # FAN
-        #
-        if domain == "fan":
-            await self._call_entity_service(
-                "set_percentage",
-                {"percentage": self.conf.on_pct},
-            )
-            return
-
-        #
-        # COVER
-        #
-        if domain == "cover":
-            entity_id = (
-                self.conf.entities[0] if self.conf.entities else None
-            )
-
-            fallback = False
-
-            if entity_id:
-                state = self.hass.states.get(entity_id)
-                supports_position = (
-                    "current_position" in state.attributes
-                    if state else False
+            # ---------------------------------------------------------
+            # LIGHT
+            # ---------------------------------------------------------
+            case "light":
+                await self._call_entity_service(
+                    "turn_on",
+                    {"brightness_pct": self.conf.on_pct},
                 )
-            else:
+                return
+
+            # ---------------------------------------------------------
+            # FAN
+            # ---------------------------------------------------------
+            case "fan":
+                await self._call_entity_service(
+                    "set_percentage",
+                    {"percentage": self.conf.on_pct},
+                )
+                return
+
+            # ---------------------------------------------------------
+            # SWITCH
+            # ---------------------------------------------------------
+            case "switch":
+                await self._call_entity_service(
+                    "turn_on", {}
+                )
+                return
+
+            # ---------------------------------------------------------
+            # MEDIA PLAYER
+            # ---------------------------------------------------------
+            case "media_player":
+                await self._media_play_pause()
+                return
+
+
+            # ---------------------------------------------------------
+            # COVER
+            # ---------------------------------------------------------
+            case "cover":
+                entity_id = self.conf.entities[0] if self.conf.entities else None
+
                 supports_position = False
-
-            # Use position if supported
-            if supports_position:
-                try:
-                    await self._call_entity_service(
-                        "set_cover_position",
-                        {"position": self.conf.on_pct},
+                if entity_id:
+                    state = self.hass.states.get(entity_id)
+                    supports_position = (
+                        state is not None and "current_position" in state.attributes
                     )
-                    return
-                except Exception as err:
-                    _LOGGER.debug(
-                        "Device %s (cover): position failed (%s), fallback to open",
-                        self.conf.device_id,
-                        err,
-                    )
-                    fallback = True
-            else:
-                fallback = True
 
-            if fallback:
+                if supports_position:
+                    try:
+                        await self._call_entity_service(
+                            "set_cover_position",
+                            {"position": self.conf.on_pct},
+                        )
+                        return
+                    except Exception as err:
+                        _LOGGER.debug(
+                            "Device %s (cover): position failed (%s), fallback to open",
+                            self.conf.device_id,
+                            err,
+                        )
+
+                # Fallback → simple open
                 await self._call_entity_service("open_cover", {})
+                return
+
+            # ---------------------------------------------------------
+            # DEFAULT (future domains)
+            # ---------------------------------------------------------
+            case _:
+                _LOGGER.warning(
+                    "Device %s: unsupported domain '%s' in _short_press_on()",
+                    self.conf.device_id,
+                    domain,
+                )
+                return
 
     async def _short_press_off(self) -> None:
         domain = self.conf.domain
 
-        #
-        # LIGHT
-        #
-        if domain == "light":
-            await self._call_entity_service("turn_off", {})
-            return
+        match domain:
 
-        #
-        # MEDIA PLAYER
-        #
-        if domain == "media_player":
-            await self._media_next()
-            return
+            # ---------------------------------------------------------
+            # LIGHT
+            # ---------------------------------------------------------
+            case "light":
+                await self._call_entity_service("turn_off", {})
+                return
 
-        #
-        # FAN
-        #
-        if domain == "fan":
-            await self._call_entity_service("turn_off", {})
-            return
+            # ---------------------------------------------------------
+            # FAN
+            # ---------------------------------------------------------
+            case "fan":
+                await self._call_entity_service("turn_off", {})
+                return
 
-        #
-        # COVER
-        #
-        if domain == "cover":
-            await self._call_entity_service("close_cover", {})
-            return
+            # ---------------------------------------------------------
+            # SWITCH
+            # ---------------------------------------------------------
+            case "switch":
+                await self._call_entity_service("turn_off", {})
+                return
+
+            # ---------------------------------------------------------
+            # MEDIA PLAYER
+            # ---------------------------------------------------------
+            case "media_player":
+                await self._media_next()
+                return
+
+
+            # ---------------------------------------------------------
+            # COVER
+            # ---------------------------------------------------------
+            case "cover":
+                await self._call_entity_service("close_cover", {})
+                return
+
+            # ---------------------------------------------------------
+            # DEFAULT (future domains)
+            # ---------------------------------------------------------
+            case _:
+                _LOGGER.warning(
+                    "Device %s: unsupported domain '%s' in _short_press_off()",
+                    self.conf.device_id,
+                    domain,
+                )
+                return
 
     # =====================================================================
     #  UNIFIED RAMP LOGIC (used by Paddle & FiveButton)
