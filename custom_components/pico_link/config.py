@@ -40,14 +40,14 @@ class PicoConfig:
     domain: str = "light"
 
     # Timing / ramp defaults (overridden by defaults: and device YAML)
-    hold_time_ms: int = 250
-    step_time_ms: int = 500
-    step_pct: int = 10
-    low_pct: int = 1
-    on_pct: int = 100
+    hold_time_ms: int = 0
+    step_time_ms: int = 0
+    step_pct: int = 0
+    low_pct: int = 0
+    on_pct: int = 0
 
     # Fan parameters
-    fan_speeds: int = 6
+    fan_speeds: int = 0
 
     # STOP / middle button action list
     middle_button: List[Dict[str, Any]] = field(default_factory=list)
@@ -165,7 +165,7 @@ def parse_pico_config(
         domain=domain,
 
         hold_time_ms=int(raw.get("hold_time_ms", 250)),
-        step_time_ms=int(raw.get("step_time_ms", 500)),
+        step_time_ms=int(raw.get("step_time_ms", 2000)),
         step_pct=int(raw.get("step_pct", 10)),
         low_pct=int(raw.get("low_pct", 1)),
         on_pct=int(raw.get("on_pct", 100)),

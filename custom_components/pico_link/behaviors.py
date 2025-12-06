@@ -218,15 +218,6 @@ class SharedBehaviors:
 
                 steps += 1
 
-                _LOGGER.error(
-                    "RAMP STEP %s/%s for button '%s' on device %s. Step time: %s sec",
-                    steps,
-                    MAX_STEPS,
-                    button,
-                    self.conf.device_id,
-                    self._step_time
-                )
-
                 # Predict next brightness
                 next_b = current_brightness + (step_value * direction)
 
