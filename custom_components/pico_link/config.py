@@ -153,6 +153,30 @@ def parse_pico_config(raw: Dict[str, Any]) -> PicoConfig:
         buttons=raw.get("buttons", {}),
     )
 
+    # ------------------------------------------------------------
+    # AUTO-INJECT TARGET INTO MIDDLE BUTTON ACTIONS (if missing)
+    # ------------------------------------------------------------
+    #
+    # Only applies to profiles that use middle_button (five_button)
+    # AND only if user did not manually supply "target".
+
+    if conf.profile == PROFILE_FIVE_BUTTON and conf.entities:
+        fixed_actions = []
+        for action in conf.middle_button:
+            if not isinstance(action, dict):
+                continue  # ignore malformed items
+
+            # If action already specifies target → leave it alone
+            if "target" not in action:
+                action = dict(action)  # shallow copy
+                action["target"] = {"entity_id": conf.entities}
+
+            fixed_actions.append(action)
+
+        conf.middle_button = fixed_actions
+
     # Final correctness check
     conf.validate()
     return conf
+
+
