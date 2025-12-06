@@ -48,24 +48,16 @@ class PaddleProfile:
         self._ctrl._pressed[button] = False
 
     # ------------------------------------------------------------------
-    # TAP / HOLD LIFECYCLE (TOKEN-SAFE)
+    # TAP / HOLD LIFECYCLE
     # ------------------------------------------------------------------
-    async def _press_lifecycle(self, button: str, my_token: int) -> None:
-        """
-        After hold_time:
-        - If released → TAP
-        - If still pressed → HOLD (ramp)
-        Token ensures stale tasks never fire.
-        """
+    async def _press_lifecycle(self, button: str, token: int):
         try:
-            # Wait hold timeout
             await asyncio.sleep(self._ctrl._hold_time)
 
-            # Stale?
-            if my_token != self._ctrl._press_tokens[button]:
+            if token != self._ctrl._press_tokens[button]:
                 return
 
-            # TAP?
+            # TAP
             if not self._ctrl._pressed.get(button, False):
                 if button == "on":
                     await self._ctrl._short_press_on()
@@ -73,12 +65,12 @@ class PaddleProfile:
                     await self._ctrl._short_press_off()
                 return
 
-            # HOLD (only lights)
+            # HOLD – only lights ramp
             if self._ctrl.conf.domain == "light":
                 direction = 1 if button == "on" else -1
-                await self._ramp(button, direction, my_token)
+                await self._ctrl._ramp(button, direction, token)
             else:
-                # Non-light: treat hold like tap
+                # Non-light → treat hold as tap
                 if button == "on":
                     await self._ctrl._short_press_on()
                 else:
@@ -90,78 +82,3 @@ class PaddleProfile:
         finally:
             self._ctrl._pressed[button] = False
             self._ctrl._tasks[button] = None
-
-    # ------------------------------------------------------------------
-    # RAMP
-    # ------------------------------------------------------------------
-    async def _ramp(self, button: str, direction: int, token: int):
-        step_pct = self._ctrl.conf.step_pct
-        low_pct = self._ctrl.conf.low_pct
-
-        step_value = round(255 * (step_pct / 100))
-        min_brightness = max(1, round(255 * (low_pct / 100)))
-        max_brightness = 255
-
-        try:
-            while True:
-
-                # Abort if a newer press occurred
-                if token != self._ctrl._press_tokens[button]:
-                    return
-
-                # Abort if button was released
-                if not self._ctrl._pressed.get(button, False):
-                    return
-
-                # Current brightness
-                entity_id = self._ctrl.conf.entities[0]
-                state = self._ctrl.hass.states.get(entity_id)
-                if not state:
-                    return
-
-                brightness = state.attributes.get("brightness")
-                if brightness is None:
-                    return
-
-                #
-                # Predict next brightness BEFORE applying step
-                #
-                if direction < 0:  # dimming
-                    next_b = brightness - step_value
-
-                    if next_b <= min_brightness:
-                        # Set EXACTLY to low_pct stop value
-                        await self._ctrl._call_entity_service(
-                            "turn_on",
-                            {"brightness": min_brightness},
-                            continue_on_error=True,
-                        )
-                        return
-
-                else:  # brightening
-                    next_b = brightness + step_value
-
-                    if next_b >= max_brightness:
-                        # Hit the real top: 255
-                        await self._ctrl._call_entity_service(
-                            "turn_on",
-                            {"brightness": max_brightness},
-                            continue_on_error=True,
-                        )
-                        return
-
-                #
-                # Apply incremental change
-                #
-                await self._ctrl._call_entity_service(
-                    "turn_on",
-                    {"brightness_step_pct": step_pct * direction},
-                    continue_on_error=True,
-                )
-
-                await asyncio.sleep(self._ctrl._step_time)
-
-        except asyncio.CancelledError:
-            return
-
-

@@ -77,7 +77,7 @@ class FiveButtonProfile:
         direction = 1 if button == "raise" else -1
         domain = self._ctrl.conf.domain
 
-        # LIGHT domain
+        # LIGHT
         if domain == "light":
             self._ctrl._pressed[button] = True
 
@@ -95,15 +95,15 @@ class FiveButtonProfile:
             )
             return
 
+        # FAN
+        if domain == "fan":
+            asyncio.create_task(self._ctrl._fan_step_discrete(direction))
+
         # COVER
         if domain == "cover":
             svc = "open_cover" if button == "raise" else "close_cover"
             asyncio.create_task(self._ctrl._call_entity_service(svc, {}))
             return
-
-        # FAN
-        if domain == "fan":
-            asyncio.create_task(self._ctrl._fan_step_discrete(direction))
 
     # -------------------------------------------------------------
     # TAP/HOLD lifecycle (raise/lower)
@@ -121,7 +121,7 @@ class FiveButtonProfile:
                 return
 
             # HOLD → ramp
-            await self._ramp(button, direction, token)
+            await self._ctrl._ramp(button, direction, token)
 
         except asyncio.CancelledError:
             pass
@@ -129,81 +129,3 @@ class FiveButtonProfile:
         finally:
             self._ctrl._pressed[button] = False
             self._ctrl._tasks[button] = None
-
-    # -------------------------------------------------------------
-    # Ramp with low_pct stop
-    # -------------------------------------------------------------
-    async def _ramp(self, button: str, direction: int, my_token: int):
-        """
-        Ramp brightness upward or downward while held.
-        OPTION A:
-          - If dimming crosses low_pct → set brightness to low_pct and stop
-          - If brightening crosses 255 → set to 255 and stop
-        """
-
-        step_pct = self._ctrl.conf.step_pct
-        low_pct = self._ctrl.conf.low_pct
-
-        # Convert % to 0–255 scale
-        step_value = round(255 * (step_pct / 100))
-        min_brightness = max(1, round(255 * (low_pct / 100)))
-
-        try:
-            while self._ctrl._pressed.get(button, False):
-
-                # TOKEN CHECK
-                if my_token != self._ctrl._press_tokens[button]:
-                    return
-
-                entity_id = self._ctrl.conf.entities[0]
-                state = self._ctrl.hass.states.get(entity_id)
-                if not state:
-                    return
-
-                b = state.attributes.get("brightness")
-                if b is None:
-                    return
-
-                # ---------- PRE-CLAMP LOGIC (OPTION A) ----------
-                if direction < 0:  # dimming
-                    next_b = b - step_value
-
-                    if next_b < min_brightness:
-                        # clamp once
-                        await self._ctrl._call_entity_service(
-                            "turn_on",
-                            {"brightness": min_brightness},
-                            continue_on_error=True,
-                        )
-
-                        # ensure no further ramping
-                        self._ctrl._pressed[button] = False
-                        return
-
-                else:  # direction > 0 (brightening)
-                    next_b = b + step_value
-
-                    if next_b > 255:
-                        await self._ctrl._call_entity_service(
-                            "turn_on",
-                            {"brightness": 255},
-                            continue_on_error=True,
-                        )
-
-                        self._ctrl._pressed[button] = False
-                        return
-
-                # ---------- APPLY STEP ----------
-                await self._ctrl._call_entity_service(
-                    "turn_on",
-                    {"brightness_step_pct": step_pct * direction},
-                    continue_on_error=True,
-                )
-
-                await asyncio.sleep(self._ctrl._step_time)
-
-        except asyncio.CancelledError:
-            return
-
-
-

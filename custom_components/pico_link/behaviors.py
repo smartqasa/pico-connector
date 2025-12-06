@@ -27,6 +27,10 @@ class SharedBehaviors:
             btn: None for btn in SUPPORTED_BUTTONS
         }
 
+        # Press tokens (incremented per press)
+        self._press_tokens: Dict[str, int] = {btn: 0 for btn in SUPPORTED_BUTTONS}
+
+        # Timestamps
         self._last_press_ts: Dict[str, float] = {btn: 0.0 for btn in SUPPORTED_BUTTONS}
         self._unsub_event: Optional[CALLBACK_TYPE] = None
 
@@ -137,6 +141,78 @@ class SharedBehaviors:
         #
         if domain == "cover":
             await self._call_entity_service("close_cover", {})
+            return
+
+    # =====================================================================
+    #  UNIFIED RAMP LOGIC (used by Paddle & FiveButton)
+    # =====================================================================
+    async def _ramp(self, button: str, direction: int, token: int):
+        """
+        Unified ramp behavior for all profiles.
+        direction: +1 brighten, -1 dim
+        """
+
+        step_pct = self.conf.step_pct
+        low_pct = self.conf.low_pct
+
+        # Convert to brightness scale
+        step_value = round(255 * (step_pct / 100))
+        min_brightness = max(1, round(255 * (low_pct / 100)))
+        max_brightness = 255
+
+        try:
+            while self._pressed.get(button, False):
+
+                # Abort if replaced by a newer press
+                if token != self._press_tokens[button]:
+                    return
+
+                # Read brightness
+                if not self.conf.entities:
+                    return
+
+                entity_id = self.conf.entities[0]
+                state = self.hass.states.get(entity_id)
+                if not state:
+                    return
+
+                brightness = state.attributes.get("brightness")
+                if brightness is None:
+                    return
+
+                # Predict next brightness BEFORE applying step
+                if direction < 0:  # Dimming
+                    next_b = brightness - step_value
+
+                    if next_b <= min_brightness:
+                        await self._call_entity_service(
+                            "turn_on",
+                            {"brightness": min_brightness},
+                            continue_on_error=True,
+                        )
+                        return
+
+                else:  # Brightening
+                    next_b = brightness + step_value
+
+                    if next_b >= max_brightness:
+                        await self._call_entity_service(
+                            "turn_on",
+                            {"brightness": max_brightness},
+                            continue_on_error=True,
+                        )
+                        return
+
+                # Apply incremental change
+                await self._call_entity_service(
+                    "turn_on",
+                    {"brightness_step_pct": step_pct * direction},
+                    continue_on_error=True,
+                )
+
+                await asyncio.sleep(self._step_time)
+
+        except asyncio.CancelledError:
             return
 
     # ---------------------------------------------------------------------
