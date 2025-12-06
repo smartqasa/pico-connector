@@ -39,7 +39,7 @@ class PicoConfig:
     domain: str = "light"
 
     hold_time_ms: int = 250
-    step_time_ms: int = 250
+    step_time_ms: int = 50
     step_pct: int = 10
     low_pct: int = 1
     on_pct: int = 100
