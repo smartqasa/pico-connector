@@ -144,25 +144,13 @@ class SharedBehaviors:
     #  UNIFIED RAMP LOGIC (used by Paddle & FiveButton)
     # =====================================================================
     async def _ramp(self, button: str, direction: int):
-        """
-        Optimized ramp:
-        - Read brightness ONCE
-        - Predict brightness locally
-        - Stop at min/max
-        - No state queries inside loop
-        """
-
         step_pct = self.conf.step_pct
         low_pct = self.conf.low_pct
 
-        # Convert pct → brightness (0-255)
         step_value = round(255 * (step_pct / 100))
         min_brightness = max(1, round(255 * (low_pct / 100)))
         max_brightness = 255
 
-        # ---------------------------------------------------------
-        # INITIAL brightness read (only one query!)
-        # ---------------------------------------------------------
         if not self.conf.entities:
             return
 
@@ -173,22 +161,18 @@ class SharedBehaviors:
 
         brightness = state.attributes.get("brightness")
 
-        # Light OFF → brightness=None → treat as 0
-        if brightness is None:
-            current_brightness = 0
-        else:
-            current_brightness = int(brightness)
-
+        # Light off → brightness=None → treat as 0
+        current_brightness = int(brightness) if brightness is not None else 0
 
         try:
             while self._pressed.get(button, False):
 
-                # -------------------------------------------------
-                # Predict next brightness BEFORE sending command
-                # -------------------------------------------------
+                # ---------------------------------------------------------
+                # Predict next brightness
+                # ---------------------------------------------------------
                 next_b = current_brightness + (step_value * direction)
 
-                # Dimming → clamp to minimum
+                # Clamp and finish if exceeded limits
                 if direction < 0 and next_b <= min_brightness:
                     await self._call_entity_service(
                         "turn_on",
@@ -197,7 +181,6 @@ class SharedBehaviors:
                     )
                     return
 
-                # Brightening → clamp to maximum
                 if direction > 0 and next_b >= max_brightness:
                     await self._call_entity_service(
                         "turn_on",
@@ -206,23 +189,23 @@ class SharedBehaviors:
                     )
                     return
 
-                # -------------------------------------------------
-                # Apply step
-                # -------------------------------------------------
+                # ---------------------------------------------------------
+                # APPLY ABSOLUTE BRIGHTNESS — **THE FIX**
+                # ---------------------------------------------------------
                 await self._call_entity_service(
                     "turn_on",
-                    {"brightness_step_pct": step_pct * direction},
+                    {"brightness": next_b},
                     continue_on_error=True,
                 )
 
-                # Update local cached brightness
+                # Cache brightness locally
                 current_brightness = next_b
 
-                # Next step delay
                 await asyncio.sleep(self._step_time)
 
         except asyncio.CancelledError:
             return
+
 
 
     # ---------------------------------------------------------------------
