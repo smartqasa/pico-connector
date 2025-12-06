@@ -29,9 +29,8 @@ class PicoConfig:
     step_pct: int = 10
     low_pct: int = 1
     on_pct: int = 100
-    middle_button: Any = None  # User-defined action for five-button middle button
     fan_speeds: int = 6  # Allowed: 4 or 6
-
+    middle_button: List[Dict[str, Any]] = field(default_factory=list)
     # Four-button action map
     buttons: Dict[str, List[Dict]] = field(default_factory=dict)
 
@@ -117,7 +116,7 @@ def parse_pico_config(raw: Dict[str, Any]) -> PicoConfig:
     low_pct = int(raw.get("low_pct", 1))
     on_pct = int(raw.get("on_pct", 100))
     fan_speeds = int(raw.get("fan_speeds", 6))
-    middle_button = raw.get("middle_button")
+    middle_button = raw.get("middle_button") or []
     buttons = raw.get("buttons", {})
 
     conf = PicoConfig(
