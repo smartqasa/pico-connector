@@ -35,6 +35,8 @@ class SharedBehaviors:
         self._hold_time = conf.hold_time_ms / 1000.0
         self._step_time = conf.step_time_ms / 1000.0
 
+
+
     # ---------------------------------------------------------------------
     # ON / OFF BEHAVIORS (DOMAIN-AWARE)
     # ---------------------------------------------------------------------
@@ -194,53 +196,62 @@ class SharedBehaviors:
             return
 
         brightness = state.attributes.get("brightness")
-
-        # Light off → brightness=None → treat as 0
         current_brightness = int(brightness) if brightness is not None else 0
+
+        # ---------------------------------------------
+        # SAFETY LIMITER
+        # ---------------------------------------------
+        MAX_STEPS = 50
+        steps = 0
 
         try:
             while self._pressed.get(button, False):
 
-                # ---------------------------------------------------------
+                if steps >= MAX_STEPS:
+                    _LOGGER.error(
+                        "RAMP SAFETY: Max steps reached (%s) for button '%s' on device %s",
+                        MAX_STEPS,
+                        button,
+                        self.conf.device_id
+                    )
+                    return
+
+                steps += 1
+
+                _LOGGER.error(
+                    "RAMP STEP %s/%s for button '%s' on device %s. Step time: %s sec",
+                    steps,
+                    MAX_STEPS,
+                    button,
+                    self.conf.device_id,
+                    self._step_time
+                )
+
                 # Predict next brightness
-                # ---------------------------------------------------------
                 next_b = current_brightness + (step_value * direction)
 
-                # Clamp and finish if exceeded limits
+                # Clamp and finish
                 if direction < 0 and next_b <= min_brightness:
-                    await self._call_entity_service(
-                        "turn_on",
-                        {"brightness": min_brightness},
-                        continue_on_error=True,
-                    )
+                    await self._call_entity_service("turn_on", {"brightness": min_brightness}, continue_on_error=True)
                     return
 
                 if direction > 0 and next_b >= max_brightness:
-                    await self._call_entity_service(
-                        "turn_on",
-                        {"brightness": max_brightness},
-                        continue_on_error=True,
-                    )
+                    await self._call_entity_service("turn_on", {"brightness": max_brightness}, continue_on_error=True)
                     return
 
-                # ---------------------------------------------------------
-                # APPLY ABSOLUTE BRIGHTNESS — **THE FIX**
-                # ---------------------------------------------------------
+                # Apply brightness
                 await self._call_entity_service(
                     "turn_on",
                     {"brightness": next_b},
                     continue_on_error=True,
                 )
 
-                # Cache brightness locally
                 current_brightness = next_b
 
                 await asyncio.sleep(self._step_time)
 
         except asyncio.CancelledError:
             return
-
-
 
     # ---------------------------------------------------------------------
     # MEDIA PLAYER BEHAVIORS
