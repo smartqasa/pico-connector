@@ -178,9 +178,9 @@ def parse_pico_config(
     # Expand placeholders in middle_button
     # ------------------------------------------------------------
     PLACEHOLDERS = {
-        "lights": conf.lights,
-        "fans": conf.fans,
         "covers": conf.covers,
+        "fans": conf.fans,
+        "lights": conf.lights,
         "media_players": conf.media_players,
         "switches": conf.switches,
     }
