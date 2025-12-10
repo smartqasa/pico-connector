@@ -37,11 +37,11 @@ class PicoConfig:
     cover_open_pos: int = 0      # 1–100, default 100
     cover_step_pct: int = 0      # 1–25
 
-    fan_speeds: int = 0          # ONLY 4 or 6
     fan_on_pct: int = 0          # 1–100
+    fan_speeds: int = 0          # ONLY 4 or 6
 
     light_on_pct: int = 0        # 1–100
-    light_low_pct: int = 0       # 1–100
+    light_low_pct: int = 0       # 1–99
     light_step_pct: int = 0      # 1–25
 
     media_player_vol_step: int = 0  # 1–100 (user-facing volume %
@@ -167,8 +167,6 @@ def parse_pico_config(
     cover_step_pct = _normalize_int(raw.get("cover_step_pct", 10), default=10, min_val=1, max_val=25)
 
     fan_on_pct = _normalize_int(raw.get("fan_on_pct", raw.get("on_pct", 100)), default=100, min_val=1, max_val=100)
-
-    # fan_speeds must be 4 or 6 only
     try:
         fs = int(raw.get("fan_speeds", 6))
     except Exception:
@@ -176,7 +174,7 @@ def parse_pico_config(
     fan_speeds = fs if fs in (4, 6) else 6
 
     light_on_pct   = _normalize_int(raw.get("light_on_pct",  raw.get("on_pct",  100)), default=100, min_val=1, max_val=100)
-    light_low_pct  = _normalize_int(raw.get("light_low_pct", raw.get("low_pct", 1)),   default=1,   min_val=1, max_val=100)
+    light_low_pct  = _normalize_int(raw.get("light_low_pct", raw.get("low_pct", 1)),   default=1,   min_val=1, max_val=99)
     light_step_pct = _normalize_int(raw.get("light_step_pct", raw.get("step_pct", 10)), default=10,  min_val=1, max_val=25)
 
     media_player_vol_step = _normalize_int(
@@ -220,8 +218,8 @@ def parse_pico_config(
         cover_open_pos=cover_open_pos,
         cover_step_pct=cover_step_pct,
 
-        fan_speeds=fan_speeds,
         fan_on_pct=fan_on_pct,
+        fan_speeds=fan_speeds,
 
         light_on_pct=light_on_pct,
         light_low_pct=light_low_pct,

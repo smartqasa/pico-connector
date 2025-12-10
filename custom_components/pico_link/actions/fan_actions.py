@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
@@ -13,62 +14,109 @@ _LOGGER = logging.getLogger(__name__)
 
 class FanActions:
     """
-    Encapsulates all fan logic:
+    Unified fan action module.
 
-    - on  → set to fan_on_pct
-    - off → turn_off
-    - stop → reverse direction
-    - raise/lower:
-        * tap  = next/previous speed step
-        * hold = repeated stepping every step_time_ms
-        * release = stop stepping
+    Profiles must call:
+        press_on / release_on
+        press_off / release_off
+        press_stop / release_stop
+        press_raise / release_raise
+        press_lower / release_lower
     """
 
     def __init__(self, ctrl: "PicoController") -> None:
         self.ctrl = ctrl
+
+        # Track per-button press state
+        self._pressed = {"raise": False, "lower": False}
         self._press_ts: dict[str, float] = {}
-        self._hold_tasks: dict[str, Optional[asyncio.Task]] = {
+
+        # Hold ramp tasks
+        self._tasks: dict[str, Optional[asyncio.Task]] = {
             "raise": None,
             "lower": None,
         }
 
-    # -------------------------------------------------------------
-    # PUBLIC ENTRY: PRESS
-    # -------------------------------------------------------------
-    def handle_press(self, button: str) -> None:
-        match button:
+    # ==============================================================
+    # ON / OFF / STOP
+    # ==============================================================
 
-            case "on":
-                asyncio.create_task(self._turn_on())
+    def press_on(self):
+        asyncio.create_task(self._turn_on())
 
-            case "off":
-                asyncio.create_task(self._turn_off())
+    def release_on(self):
+        pass
 
-            case "stop":
-                asyncio.create_task(self._reverse_direction())
+    def press_off(self):
+        asyncio.create_task(self._turn_off())
 
-            case "raise" | "lower":
-                self._press_ts[button] = asyncio.get_event_loop().time()
-                self.ctrl.utils._pressed[button] = True
-                asyncio.create_task(self._handle_raise_lower_press(button))
+    def release_off(self):
+        pass
 
-            case _:
-                _LOGGER.debug("FanActions: unrecognized button '%s'", button)
+    def press_stop(self):
+        asyncio.create_task(self._reverse_direction())
 
-    # -------------------------------------------------------------
-    # PUBLIC ENTRY: RELEASE
-    # -------------------------------------------------------------
-    def handle_release(self, button: str) -> None:
-        if button in ("raise", "lower"):
-            self.ctrl.utils._pressed[button] = False
-            task = self._hold_tasks.get(button)
-            if task and not task.done():
-                task.cancel()
-            self._hold_tasks[button] = None
+    def release_stop(self):
+        pass
 
-    # -------------------------------------------------------------
-    # ON / OFF / DIRECTION
-    # -------------------------------------------------------------
+    # ==============================================================
+    # RAISE / LOWER
+    # ==============================================================
+
+    def press_raise(self):
+        self._begin_raise_lower("raise", direction=1)
+
+    def release_raise(self):
+        self._end_raise_lower("raise")
+
+    def press_lower(self):
+        self._begin_raise_lower("lower", direction=-1)
+
+    def release_lower(self):
+        self._end_raise_lower("lower")
+
+    # ==============================================================
+    # TAP + HOLD LOGIC
+    # ==============================================================
+
+    def _begin_raise_lower(self, button: str, direction: int):
+        self._pressed[button] = True
+        self._press_ts[button] = time.time()
+
+        # TAP (one step immediately)
+        asyncio.create_task(self._step_discrete(direction))
+
+        # HOLD lifecycle
+        task = asyncio.create_task(self._hold_lifecycle(button, direction))
+        self._tasks[button] = task
+
+    def _end_raise_lower(self, button: str):
+        self._pressed[button] = False
+
+        task = self._tasks.get(button)
+        if task and not task.done():
+            task.cancel()
+
+        self._tasks[button] = None
+
+    async def _hold_lifecycle(self, button: str, direction: int):
+        try:
+            await asyncio.sleep(self.ctrl.utils._hold_time)
+
+            if not self._pressed.get(button):
+                return  # tap only
+
+            while self._pressed.get(button):
+                await self._step_discrete(direction)
+                await asyncio.sleep(self.ctrl.utils._step_time)
+
+        except asyncio.CancelledError:
+            pass
+
+    # ==============================================================
+    # FAN OPERATIONS
+    # ==============================================================
+
     async def _turn_on(self):
         pct = self.ctrl.conf.fan_on_pct
         await self.ctrl.utils.call_service(
@@ -89,62 +137,23 @@ class FanActions:
         if not state:
             return
 
-        current = state.attributes.get("direction")
-        if current in ("forward", "reverse"):
-            new_dir = "reverse" if current == "forward" else "forward"
-            await self.ctrl.utils.call_service(
-                "set_direction",
-                {"direction": new_dir},
-                domain="fan",
-            )
+        cur = state.attributes.get("direction")
+        if cur not in ("forward", "reverse"):
+            return
 
-    # -------------------------------------------------------------
-    # RAISE / LOWER TAP & HOLD HANDLING
-    # -------------------------------------------------------------
-    async def _handle_raise_lower_press(self, button: str):
-        now = asyncio.get_event_loop().time()
-        self._press_ts[button] = now
+        new_dir = "reverse" if cur == "forward" else "forward"
 
-        direction = 1 if button == "raise" else -1
-
-        # TAP (one step)
-        await self._step_discrete(direction)
-
-        # HOLD lifecycle
-        task = asyncio.create_task(
-            self._hold_lifecycle(button, direction)
+        await self.ctrl.utils.call_service(
+            "set_direction",
+            {"direction": new_dir},
+            domain="fan",
         )
-        self._hold_tasks[button] = task
 
-    async def _hold_lifecycle(self, button: str, direction: int):
-        try:
-            await asyncio.sleep(self.ctrl.utils._hold_time)
+    # ==============================================================
+    # DISCRETE FAN SPEED STEPPING
+    # ==============================================================
 
-            if not self.ctrl.utils._pressed.get(button, False):
-                return
-
-            interval = self.ctrl.utils._step_time
-
-            while self.ctrl.utils._pressed.get(button, False):
-                await self._step_discrete(direction)
-                await asyncio.sleep(interval)
-
-        except asyncio.CancelledError:
-            pass
-
-        finally:
-            self._hold_tasks[button] = None
-            self.ctrl.utils._pressed[button] = False
-
-    # -------------------------------------------------------------
-    # STEP LOGIC
-    # -------------------------------------------------------------
     async def _step_discrete(self, direction: int):
-        """
-        Fan supports discrete speeds (4 or 6). We choose the nearest step and
-        move one level up/down.
-        """
-
         speeds = self.ctrl.conf.fan_speeds
         ladder = self._build_speed_ladder(speeds)
 
@@ -152,15 +161,12 @@ class FanActions:
         if current is None:
             return
 
-        # Find nearest ladder index
-        idx = min(
-            range(len(ladder)),
-            key=lambda i: abs(ladder[i] - current)
-        )
+        # Find closest speed step
+        idx = min(range(len(ladder)), key=lambda i: abs(ladder[i] - current))
         new_idx = max(0, min(len(ladder) - 1, idx + direction))
 
         if new_idx == idx:
-            return  # already at edge
+            return  # already min/max
 
         new_pct = ladder[new_idx]
 
@@ -170,9 +176,10 @@ class FanActions:
             domain="fan",
         )
 
-    # -------------------------------------------------------------
+    # ==============================================================
     # HELPERS
-    # -------------------------------------------------------------
+    # ==============================================================
+
     def _build_speed_ladder(self, speeds: int) -> list[int]:
         steps = speeds - 1
         return [round(i * 100 / steps) for i in range(speeds)]
@@ -184,6 +191,7 @@ class FanActions:
 
         pct = state.attributes.get("percentage")
         if pct is None:
+            # If fan is off, treat as 0%
             return 0.0 if state.state == "off" else float(self.ctrl.conf.fan_on_pct)
 
         try:
