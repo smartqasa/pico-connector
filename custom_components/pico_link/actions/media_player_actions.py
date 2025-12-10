@@ -1,3 +1,4 @@
+# media_player_actions.py
 from __future__ import annotations
 
 import asyncio
@@ -27,12 +28,31 @@ class MediaPlayerActions:
         self._tasks: dict[str, Optional[asyncio.Task]] = {}
 
     # -------------------------------------------------------------
-    # PRESS
+    # REQUIRED UNIFIED API FOR ALL PROFILES
+    # -------------------------------------------------------------
+    async def press_on(self):
+        """Unified ON → turn_on + unmute."""
+        await self._turn_on()
+
+    async def press_off(self):
+        """Unified OFF → turn_off + mute."""
+        await self._turn_off()
+
+    async def press_raise(self):
+        """Unified raise → acts as tap volume increase."""
+        await self._step_volume("raise")
+
+    async def press_lower(self):
+        """Unified lower → acts as tap volume decrease."""
+        await self._step_volume("lower")
+
+    # -------------------------------------------------------------
+    # PUBLIC ENTRY: PRESS
     # -------------------------------------------------------------
     def handle_press(self, button: str) -> None:
         match button:
 
-            # POWER-LIKE BEHAVIOR
+            # POWER BEHAVIOR
             case "on":
                 asyncio.create_task(self._turn_on())
 
@@ -44,11 +64,13 @@ class MediaPlayerActions:
                 actions = self.ctrl.conf.middle_button
 
                 if actions:
-                    # Run user-defined STOP actions
+                    # Custom STOP actions
                     for action in actions:
-                        asyncio.create_task(self.ctrl.utils.execute_button_action(action))
+                        asyncio.create_task(
+                            self.ctrl.utils.execute_button_action(action)
+                        )
                 else:
-                    # Default STOP behavior → mute/unmute toggle
+                    # Default STOP = toggle mute
                     asyncio.create_task(self._toggle_mute())
 
                 return
@@ -57,10 +79,10 @@ class MediaPlayerActions:
             case "raise" | "lower":
                 self._pressed[button] = True
 
-                # TAP = step once immediately
+                # TAP = single step
                 asyncio.create_task(self._step_volume(button))
 
-                # HOLD = continuous stepping
+                # HOLD = continuous ramping
                 task = asyncio.create_task(self._hold_lifecycle(button))
                 self._tasks[button] = task
 
@@ -68,7 +90,7 @@ class MediaPlayerActions:
                 _LOGGER.debug("MediaPlayerActions: unknown button '%s'", button)
 
     # -------------------------------------------------------------
-    # RELEASE
+    # PUBLIC ENTRY: RELEASE
     # -------------------------------------------------------------
     def handle_release(self, button: str) -> None:
         if button not in ("raise", "lower"):
@@ -86,7 +108,7 @@ class MediaPlayerActions:
     # POWER / MUTE
     # -------------------------------------------------------------
     async def _turn_on(self):
-        """ turn_on + unmute """
+        """turn_on + unmute"""
         await self.ctrl.utils.call_service(
             "turn_on",
             {},
@@ -101,7 +123,7 @@ class MediaPlayerActions:
         )
 
     async def _turn_off(self):
-        """ turn_off + mute """
+        """turn_off + mute"""
         await self.ctrl.utils.call_service(
             "turn_off",
             {},
@@ -116,7 +138,7 @@ class MediaPlayerActions:
         )
 
     # -------------------------------------------------------------
-    # TAP STEP
+    # TAP VOLUME STEP
     # -------------------------------------------------------------
     async def _step_volume(self, button: str):
         """Tap volume step."""
@@ -127,9 +149,9 @@ class MediaPlayerActions:
             return
 
         current_pct = current * 100.0
-        mult = 1 if button == "raise" else -1
+        direction = 1 if button == "raise" else -1
 
-        new_pct = max(0.0, min(100.0, current_pct + (step_pct * mult)))
+        new_pct = max(0.0, min(100.0, current_pct + (step_pct * direction)))
 
         await self.ctrl.utils.call_service(
             "volume_set",
@@ -138,16 +160,17 @@ class MediaPlayerActions:
         )
 
     # -------------------------------------------------------------
-    # HOLD = continuous ramp
+    # HOLD LIFECYCLE (continuous volume ramp)
     # -------------------------------------------------------------
     async def _hold_lifecycle(self, button: str):
         try:
+            # Wait to determine tap vs hold
             await asyncio.sleep(self.ctrl.utils._hold_time)
 
             if not self._pressed.get(button):
                 return  # tap only
 
-            # HOLD → continuous ramp
+            # HOLD → continuous stepping
             while self._pressed.get(button):
                 await self._step_volume(button)
                 await asyncio.sleep(self.ctrl.utils._step_time)
@@ -156,17 +179,14 @@ class MediaPlayerActions:
             pass
 
     # -------------------------------------------------------------
-    # STOP DEFAULT = MUTE/UNMUTE
+    # DEFAULT STOP = MUTE/UNMUTE TOGGLE
     # -------------------------------------------------------------
     async def _toggle_mute(self):
-        """Default STOP = mute/unmute toggle."""
-
         state = self.ctrl.utils.get_entity_state()
         if not state:
             return
 
         is_muted = state.attributes.get("is_volume_muted")
-
         new_val = not bool(is_muted)
 
         await self.ctrl.utils.call_service(
@@ -185,8 +205,6 @@ class MediaPlayerActions:
             return None
 
         try:
-            vol = float(state.attributes.get("volume_level", 0.0))
+            return float(state.attributes.get("volume_level", 0.0))
         except Exception:
-            vol = 0.0
-
-        return max(0.0, min(1.0, vol))
+            return 0.0

@@ -25,6 +25,25 @@ class SwitchActions:
         self.ctrl = ctrl
 
     # -------------------------------------------------------------
+    # REQUIRED BY ALL PROFILES
+    # -------------------------------------------------------------
+    async def press_on(self):
+        """Generic ON → turn_on."""
+        await self._turn_on()
+
+    async def press_off(self):
+        """Generic OFF → turn_off."""
+        await self._turn_off()
+
+    async def press_raise(self):
+        """Switches do not support raise/lower."""
+        _LOGGER.debug("SwitchActions: press_raise ignored")
+
+    async def press_lower(self):
+        """Switches do not support raise/lower."""
+        _LOGGER.debug("SwitchActions: press_lower ignored")
+
+    # -------------------------------------------------------------
     # PUBLIC ENTRY: PRESS
     # -------------------------------------------------------------
     def handle_press(self, button: str) -> None:
@@ -37,7 +56,6 @@ class SwitchActions:
                 asyncio.create_task(self._turn_off())
 
             case "stop":
-                # No meaning for switches
                 _LOGGER.debug("SwitchActions: stop ignored")
                 return
 
@@ -52,7 +70,7 @@ class SwitchActions:
     # PUBLIC ENTRY: RELEASE
     # -------------------------------------------------------------
     def handle_release(self, button: str) -> None:
-        # Switches have zero release behavior
+        # No release behaviors for switches
         pass
 
     # -------------------------------------------------------------

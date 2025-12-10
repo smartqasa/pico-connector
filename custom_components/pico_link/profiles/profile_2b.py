@@ -38,8 +38,13 @@ class Pico2Button:
                 actions.press_on()
             case "off":
                 actions.press_off()
+
+            # SAFETY: ignore unexpected buttons safely
+            case "stop":
+                actions.press_stop()
+
             case _:
-                _LOGGER.debug("Pico2Button: unknown button '%s'", button)
+                _LOGGER.debug("Pico2Button: unknown press button '%s'", button)
 
     # -------------------------------------------------------------
     # RELEASE
@@ -58,5 +63,10 @@ class Pico2Button:
                 actions.release_on()
             case "off":
                 actions.release_off()
+
+            # SAFETY: call release_stop() for consistency
+            case "stop":
+                actions.release_stop()
+
             case _:
                 pass
