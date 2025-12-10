@@ -1,4 +1,3 @@
-# profiles/profile_p2b.py
 from __future__ import annotations
 
 import logging
@@ -10,27 +9,27 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 
-# profiles/profile_p2b.py
-
 class PaddleSwitchPico:
-    """
-    Paddle P2B:
-    - Two large paddle buttons: ON and OFF
-    - No raise/lower or stop
-    """
-
     def __init__(self, controller: "PicoController") -> None:
         self._ctrl = controller
+
+    def _actions(self):
+        domain = self._ctrl.utils.entity_domain()
+        if not domain:
+            return None
+
+        actions = self._ctrl.actions.get(domain)
+        if not actions:
+            _LOGGER.debug("P2B: No action handler available for domain %s", domain)
+            return None
+
+        return actions
 
     # -------------------------------------------------------------
     # PRESS
     # -------------------------------------------------------------
     def handle_press(self, button: str) -> None:
-        domain = self._ctrl.utils.entity_domain()
-        if domain is None:
-            return
-
-        actions = self._ctrl.actions.get(domain)
+        actions = self._actions()
         if not actions:
             return
 
@@ -40,17 +39,13 @@ class PaddleSwitchPico:
             case "off":
                 actions.press_off()
             case _:
-                pass
+                _LOGGER.debug("P2B: Ignoring unexpected press button '%s'", button)
 
     # -------------------------------------------------------------
     # RELEASE
     # -------------------------------------------------------------
     def handle_release(self, button: str) -> None:
-        domain = self._ctrl.utils.entity_domain()
-        if domain is None:
-            return
-
-        actions = self._ctrl.actions.get(domain)
+        actions = self._actions()
         if not actions:
             return
 
@@ -60,4 +55,4 @@ class PaddleSwitchPico:
             case "off":
                 actions.release_off()
             case _:
-                pass
+                _LOGGER.debug("P2B: Ignoring unexpected release button '%s'", button)

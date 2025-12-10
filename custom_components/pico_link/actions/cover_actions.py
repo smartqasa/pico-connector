@@ -42,7 +42,15 @@ class CoverActions:
                 asyncio.create_task(self._close())
 
             case "stop":
-                asyncio.create_task(self._stop())
+                actions = self.ctrl.conf.middle_button
+
+                if actions:
+                    # Custom middle button actions override default stop_cover
+                    for action in actions:
+                        asyncio.create_task(self.ctrl.utils.execute_button_action(action))
+                else:
+                    # Default STOP → stop the cover
+                    asyncio.create_task(self._stop())
 
             case "raise" | "lower":
                 self._press_ts[button] = asyncio.get_event_loop().time()
@@ -51,10 +59,6 @@ class CoverActions:
 
             case _:
                 _LOGGER.debug("CoverActions: unknown button '%s'", button)
-
-    def handle_release(self, button: str) -> None:
-        if button in ("raise", "lower"):
-            asyncio.create_task(self._release_lifecycle(button))
 
     # -------------------------------------------------------------
     # TAP/HOLD LIFECYCLES

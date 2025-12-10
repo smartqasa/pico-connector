@@ -1,5 +1,5 @@
 # ================================================================
-# CONFIG MODULE — Handles PicoLink configuration and validation
+# CONFIG MODULE
 # ================================================================
 from __future__ import annotations
 
@@ -21,30 +21,33 @@ _LOGGER = logging.getLogger(__name__)
 class PicoConfig:
     device_id: str
     type: str
-    behavior: str | None = None
 
-    # Entities by domain
+    # Entities by domain — ONE must be assigned
     covers: List[str] = field(default_factory=list)
     fans: List[str] = field(default_factory=list)
     lights: List[str] = field(default_factory=list)
     media_players: List[str] = field(default_factory=list)
     switches: List[str] = field(default_factory=list)
 
-    # Normalized action parameters
-    hold_time_ms: int = 0
-    step_time_ms: int = 0
+    # Normalized action parameters (ms)
+    hold_time_ms: int = 250
+    step_time_ms: int = 750
 
-    cover_open_pos: int = 0      # 1–100, default 100
-    cover_step_pct: int = 0      # 1–25
+    # Cover configuration
+    cover_open_pos: int = 100      # 1–100
+    cover_step_pct: int = 10       # 1–25
 
-    fan_on_pct: int = 0          # 1–100
-    fan_speeds: int = 0          # ONLY 4 or 6
+    # Fan configuration
+    fan_on_pct: int = 100          # 1–100
+    fan_speeds: int = 6            # ONLY 4 or 6
 
-    light_on_pct: int = 0        # 1–100
-    light_low_pct: int = 0       # 1–99
-    light_step_pct: int = 0      # 1–25
+    # Light configuration
+    light_on_pct: int = 100        # 1–100
+    light_low_pct: int = 1         # 1–99
+    light_step_pct: int = 10       # 1–25
 
-    media_player_vol_step: int = 0  # 1–100 (user-facing volume %
+    # Media player config
+    media_player_vol_step: int = 10  # 1–20 recommended
 
     # 3BRL only
     middle_button: List[Dict[str, Any]] = field(default_factory=list)
@@ -54,15 +57,56 @@ class PicoConfig:
 
     # ------------------------------------------------------------
     def validate(self) -> None:
+        # Validate Pico type
         if self.type not in VALID_PICO_TYPES:
             raise ValueError(
-                f"Invalid type '{self.type}' for device {self.device_id}. "
-                f"Must be one of: {VALID_PICO_TYPES}"
+                f"Invalid Pico type '{self.type}'. Must be one of: {VALID_PICO_TYPES}"
             )
+
+        # Validate exactly ONE domain
+        domains = [
+            self.covers,
+            self.fans,
+            self.lights,
+            self.media_players,
+            self.switches,
+        ]
+        active_domains = sum(bool(d) for d in domains)
+
+        if active_domains == 0:
+            raise ValueError(
+                f"Pico {self.device_id}: No target domain configured. "
+                "Must define exactly one of: covers, fans, lights, media_players, switches."
+            )
+
+        if active_domains > 1:
+            raise ValueError(
+                f"Pico {self.device_id}: Multiple domains configured. "
+                "Only ONE domain may be assigned to each Pico."
+            )
+
+        # Fan validation
+        if self.fans:
+            if self.fan_speeds not in (4, 6):
+                raise ValueError(
+                    f"Pico {self.device_id}: fan_speeds must be 4 or 6, got {self.fan_speeds}"
+                )
+
+        # 4B validation
+        if self.type == "4B":
+            if not isinstance(self.buttons, dict):
+                raise ValueError(
+                    f"Pico {self.device_id} (4B): 'buttons' must be a dict."
+                )
+            for key, vals in self.buttons.items():
+                if not isinstance(vals, list):
+                    raise ValueError(
+                        f"Pico {self.device_id} (4B): '{key}' must be a list of actions."
+                    )
 
 
 # ================================================================
-# DEVICE LOOKUP
+# DEVICE LOOKUP UTILITY
 # ================================================================
 def lookup_device_id(hass, name: str) -> str | None:
     dev_reg = dr.async_get(hass)
@@ -79,20 +123,19 @@ def lookup_device_id(hass, name: str) -> str | None:
 
 
 # ================================================================
-# NORMALIZATION UTILITIES (DRY)
+# NORMALIZATION UTILITIES
 # ================================================================
 def _normalize_int(raw_val, default: int, min_val: int, max_val: int) -> int:
-    """Convert to int, apply default, and clamp into [min_val, max_val]."""
+    """Convert to int, clamp into range, treat 0 or invalid as default."""
     try:
-        value = int(raw_val)
+        val = int(raw_val)
     except Exception:
-        value = default
+        val = default
 
-    # 0 means “not provided”
-    if value == 0:
-        value = default
+    if val == 0:
+        return default
 
-    return max(min_val, min(max_val, value))
+    return max(min_val, min(max_val, val))
 
 
 def _normalize_list(value):
@@ -104,7 +147,7 @@ def _normalize_list(value):
 
 
 # ================================================================
-# CONFIG PARSER — MERGES DEFAULTS + DEVICE OVERRIDES
+# CONFIG PARSER
 # ================================================================
 def parse_pico_config(
     hass,
@@ -113,7 +156,7 @@ def parse_pico_config(
 ) -> PicoConfig:
 
     # ------------------------------------------------------------
-    # Ensure Pico type exists
+    # Ensure device type exists
     # ------------------------------------------------------------
     device_type = device_raw.get("type")
     if not device_type:
@@ -123,71 +166,77 @@ def parse_pico_config(
     # ------------------------------------------------------------
     # Merge defaults → raw (except middle_button)
     # ------------------------------------------------------------
-    raw: Dict[str, Any] = {}
-    for key, value in defaults.items():
-        if key == "middle_button":
-            continue
-        raw[key] = value
+    merged: Dict[str, Any] = {}
+    for key, val in defaults.items():
+        if key != "middle_button":
+            merged[key] = val
 
-    raw.update(device_raw)
+    merged.update(device_raw)
 
     # ------------------------------------------------------------
     # Resolve device_id
     # ------------------------------------------------------------
-    device_id = raw.get("device_id")
+    device_id = merged.get("device_id")
+
     if not device_id:
-        name = raw.get("name")
+        name = merged.get("name")
         if not name:
             raise ValueError("Device must define 'device_id' or 'name'.")
 
         device_id = lookup_device_id(hass, name)
         if not device_id:
             raise ValueError(
-                f"No device found in device registry with name '{name}'."
+                f"No device found in registry with name '{name}'."
             )
 
-        _LOGGER.debug("Resolved '%s' → device_id %s", name, device_id)
+        _LOGGER.debug("Resolved device name '%s' → device_id %s", name, device_id)
 
     # ------------------------------------------------------------
     # Normalize entity lists
     # ------------------------------------------------------------
-    covers         = _normalize_list(raw.get("covers"))
-    fans           = _normalize_list(raw.get("fans"))
-    lights         = _normalize_list(raw.get("lights"))
-    media_players  = _normalize_list(raw.get("media_players"))
-    switches       = _normalize_list(raw.get("switches"))
+    covers         = _normalize_list(merged.get("covers"))
+    fans           = _normalize_list(merged.get("fans"))
+    lights         = _normalize_list(merged.get("lights"))
+    media_players  = _normalize_list(merged.get("media_players"))
+    switches       = _normalize_list(merged.get("switches"))
 
     # ------------------------------------------------------------
-    # Normalize parameters
+    # Normalize timing and behavior parameters
     # ------------------------------------------------------------
-    hold_time_ms  = _normalize_int(raw.get("hold_time_ms", 250), default=250, min_val=100, max_val=2000)
-    step_time_ms  = _normalize_int(raw.get("step_time_ms", 750), default=750, min_val=100, max_val=2000)
+    hold_time_ms  = _normalize_int(merged.get("hold_time_ms", 250), 250, 100, 2000)
+    step_time_ms  = _normalize_int(merged.get("step_time_ms", 750), 750, 100, 2000)
 
-    cover_open_pos = _normalize_int(raw.get("cover_open_pos", 100), default=100, min_val=1, max_val=100)
-    cover_step_pct = _normalize_int(raw.get("cover_step_pct", 10), default=10, min_val=1, max_val=25)
+    cover_open_pos = _normalize_int(merged.get("cover_open_pos", 100), 100, 1, 100)
+    cover_step_pct = _normalize_int(merged.get("cover_step_pct", 10), 10, 1, 25)
 
-    fan_on_pct = _normalize_int(raw.get("fan_on_pct", raw.get("on_pct", 100)), default=100, min_val=1, max_val=100)
+    fan_on_pct = _normalize_int(merged.get("fan_on_pct", merged.get("on_pct", 100)),
+                                100, 1, 100)
+
     try:
-        fs = int(raw.get("fan_speeds", 6))
+        fs = int(merged.get("fan_speeds", 6))
     except Exception:
         fs = 6
     fan_speeds = fs if fs in (4, 6) else 6
 
-    light_on_pct   = _normalize_int(raw.get("light_on_pct",  raw.get("on_pct",  100)), default=100, min_val=1, max_val=100)
-    light_low_pct  = _normalize_int(raw.get("light_low_pct", raw.get("low_pct", 1)),   default=1,   min_val=1, max_val=99)
-    light_step_pct = _normalize_int(raw.get("light_step_pct", raw.get("step_pct", 10)), default=10,  min_val=1, max_val=25)
+    light_on_pct   = _normalize_int(merged.get("light_on_pct",  merged.get("on_pct", 100)),
+                                    100, 1, 100)
+    light_low_pct  = _normalize_int(merged.get("light_low_pct", merged.get("low_pct", 1)),
+                                    1,   1, 99)
+    light_step_pct = _normalize_int(merged.get("light_step_pct", merged.get("step_pct", 10)),
+                                    10, 1, 25)
 
     media_player_vol_step = _normalize_int(
-        raw.get("media_player_vol_step", 10),
+        merged.get("media_player_vol_step", 10),
         default=10,
         min_val=1,
-        max_val=100,
+        max_val=20,  # corrected: 100 was too large
     )
 
     # ------------------------------------------------------------
     # Middle button (3BRL only)
     # ------------------------------------------------------------
     raw_mb = device_raw.get("middle_button")
+
     if device_type == "3BRL":
         if raw_mb == "default":
             middle_button = defaults.get("middle_button", [])
@@ -199,12 +248,11 @@ def parse_pico_config(
         middle_button = []
 
     # ------------------------------------------------------------
-    # BUILD PicoConfig
+    # INITIAL CONFIG BUILD
     # ------------------------------------------------------------
     conf = PicoConfig(
         device_id=device_id,
         type=device_type,
-        behavior=None,
 
         covers=covers,
         fans=fans,
@@ -228,11 +276,11 @@ def parse_pico_config(
         media_player_vol_step=media_player_vol_step,
 
         middle_button=middle_button,
-        buttons=raw.get("buttons", {}),
+        buttons=merged.get("buttons", {}),
     )
 
     # ------------------------------------------------------------
-    # Placeholder expansion in middle_button
+    # Placeholder expansion for middle_button
     # ------------------------------------------------------------
     PLACEHOLDERS = {
         "covers": conf.covers,

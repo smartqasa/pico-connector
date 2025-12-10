@@ -54,10 +54,26 @@ class FanActions:
         pass
 
     def press_stop(self):
+        """
+        STOP behavior for FAN:
+        - If user configured custom middle_button actions → run them.
+        - Otherwise → reverse direction (default behavior).
+        """
+        actions = self.ctrl.conf.middle_button
+
+        if actions:
+            # Run configured STOP actions
+            for action in actions:
+                asyncio.create_task(self.ctrl.utils.execute_button_action(action))
+            return
+
+        # Default STOP behavior → reverse direction
         asyncio.create_task(self._reverse_direction())
 
     def release_stop(self):
+        # STOP is momentary, no hold state → no release logic required.
         pass
+
 
     # ==============================================================
     # RAISE / LOWER

@@ -1,4 +1,3 @@
-# profiles/profile_3brl.py
 from __future__ import annotations
 
 import logging
@@ -11,27 +10,28 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class Pico3ButtonRaiseLower:
-    """
-    Clean 3BRL profile:
-    - Converts button presses/releases into semantic actions
-    - Routes actions to the appropriate domain module
-    """
-
     def __init__(self, controller: "PicoController") -> None:
         self._ctrl = controller
+
+    def _actions(self):
+        domain = self._ctrl.utils.entity_domain()
+        if not domain:
+            _LOGGER.debug("3BRL: no domain configured")
+            return None
+
+        actions = self._ctrl.actions.get(domain)
+        if not actions:
+            _LOGGER.debug("3BRL: no action handler for domain %s", domain)
+            return None
+
+        return actions
 
     # -------------------------------------------------------------
     # PRESS
     # -------------------------------------------------------------
     def handle_press(self, button: str) -> None:
-        domain = self._ctrl.utils.entity_domain()
-        if domain is None:
-            _LOGGER.debug("Pico3BRL: No domain configured")
-            return
-
-        actions = self._ctrl.actions.get(domain)
-        if actions is None:
-            _LOGGER.error("Pico3BRL: No action module for domain '%s'", domain)
+        actions = self._actions()
+        if not actions:
             return
 
         match button:
@@ -46,18 +46,14 @@ class Pico3ButtonRaiseLower:
             case "lower":
                 actions.press_lower()
             case _:
-                _LOGGER.debug("Pico3BRL: unknown button '%s'", button)
+                _LOGGER.debug("3BRL: unknown press button '%s'", button)
 
     # -------------------------------------------------------------
     # RELEASE
     # -------------------------------------------------------------
     def handle_release(self, button: str) -> None:
-        domain = self._ctrl.utils.entity_domain()
-        if domain is None:
-            return
-
-        actions = self._ctrl.actions.get(domain)
-        if actions is None:
+        actions = self._actions()
+        if not actions:
             return
 
         match button:
