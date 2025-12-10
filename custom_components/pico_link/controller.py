@@ -89,14 +89,13 @@ class PicoController:
                 _LOGGER.debug("Ignoring unsupported button '%s'", button)
                 return
 
-            # Select behavior on first event
+            # Select profile once
             if self._behavior is None:
                 if not self._select_behavior(data):
-                    return  # fail early but gracefully
+                    return
 
-            # Dispatch to profile
+            # Dispatch to behavior
             try:
-                # Type-checker safety: ensure _behavior is initialized
                 if self._behavior is None:
                     _LOGGER.error(
                         "Device %s: behavior unexpectedly None during dispatch",
@@ -118,6 +117,19 @@ class PicoController:
                     action,
                     e,
                 )
+
+        # Subscribe to lutron_caseta_button_event
+        self._unsub_event = self.hass.bus.async_listen(
+            PICO_EVENT_TYPE,
+            handle_event,
+        )
+
+        _LOGGER.debug(
+            "Device %s: subscribed to event '%s'",
+            self.conf.device_id,
+            PICO_EVENT_TYPE,
+        )
+
 
     # ---------------------------------------------------------
     # Determine which behavior to use (3BRL, 4B, etc.)
