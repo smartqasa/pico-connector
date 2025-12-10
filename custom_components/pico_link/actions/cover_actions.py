@@ -117,7 +117,7 @@ class CoverActions:
         - If open_pos == 100 → fully open using open_cover
         - Otherwise          → set_cover_position to open_pos
         """
-        pos = self.ctrl.conf.open_pos
+        pos = self.ctrl.conf.cover_open_pos
 
         if pos == 100:
             await self.ctrl._call_entity_service("open_cover", {})
@@ -136,7 +136,7 @@ class CoverActions:
 
     async def _step(self, button: str, pos: int):
         """Move cover position by configured step_pct."""
-        step_pct = self.ctrl.conf.step_pct or 5
+        step_pct = self.ctrl.conf.cover_step_pct or 5
 
         if button == "raise":
             new_pos = min(100, pos + step_pct)
