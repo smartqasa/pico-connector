@@ -1,8 +1,8 @@
+# cover_actions.py
 from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -13,109 +13,115 @@ _LOGGER = logging.getLogger(__name__)
 
 class CoverActions:
     """
-    Cover behavior:
+    Clean, deterministic cover behavior:
 
-    - on    → open (respect cover_open_pos)
-    - off   → close
-    - stop  → stop or middle_button actions
+    ON (tap)          → open to cover_open_pos
+    OFF (tap)         → close fully
 
-    - raise/lower:
-        * tap  = step position +/- cover_step_pct
-        * hold = continuous open/close until release
+    RAISE (tap)       → step open
+    RAISE (hold)      → open_cover (continuous)
+    RAISE (release)   → stop_cover
+
+    LOWER (tap)       → step close
+    LOWER (hold)      → close_cover (continuous)
+    LOWER (release)   → stop_cover
+
+    STOP/MIDDLE (tap) → middle_button actions OR stop_cover
     """
-
-    MAX_STEPS = 50   # safety limit for ramp loops
 
     def __init__(self, ctrl: "PicoController") -> None:
         self.ctrl = ctrl
 
-        # Local button-press tracking
+        # Track hold vs tap
         self._pressed: dict[str, bool] = {
             "raise": False,
             "lower": False,
         }
-
         self._press_ts: dict[str, float] = {}
-        self._tasks: dict[str, Optional[asyncio.Task]] = {
-            "raise": None,
-            "lower": None,
-        }
 
     # -------------------------------------------------------------
-    # PUBLIC API
+    # PRESS
     # -------------------------------------------------------------
-    def handle_press(self, button: str):
+    def handle_press(self, button: str) -> None:
         match button:
 
+            # ON → open to preset position
             case "on":
-                asyncio.create_task(self._open())
+                asyncio.create_task(self._open_to_pos())
+                return
 
+            # OFF → fully close
             case "off":
-                asyncio.create_task(self._close())
+                asyncio.create_task(self._close_full())
+                return
 
+            # MIDDLE → stop or run user actions
             case "stop":
                 actions = self.ctrl.conf.middle_button
                 if actions:
-                    for a in actions:
-                        asyncio.create_task(self.ctrl.utils.execute_button_action(a))
+                    for action in actions:
+                        asyncio.create_task(self.ctrl.utils.execute_button_action(action))
                 else:
                     asyncio.create_task(self._stop())
+                return
 
+            # RAISE / LOWER logic
             case "raise" | "lower":
                 self._pressed[button] = True
-                self._press_ts[button] = time.time()
-
-                task = asyncio.create_task(self._press_lifecycle(button))
-                self._tasks[button] = task
+                self._press_ts[button] = asyncio.get_event_loop().time()
+                asyncio.create_task(self._press_lifecycle(button))
+                return
 
             case _:
-                _LOGGER.debug("CoverActions: unknown button %s", button)
+                _LOGGER.debug("CoverActions: unknown button '%s'", button)
+                return
 
-    def handle_release(self, button: str):
-        """Always stop motion on release, and step if it was a TAP."""
-
+    # -------------------------------------------------------------
+    # RELEASE
+    # -------------------------------------------------------------
+    def handle_release(self, button: str) -> None:
         if button not in ("raise", "lower"):
             return
 
         self._pressed[button] = False
-
-        # Cancel hold/tap lifecycle
-        task = self._tasks.get(button)
-        if task and not task.done():
-            task.cancel()
-        self._tasks[button] = None
-
         asyncio.create_task(self._release_lifecycle(button))
 
     # -------------------------------------------------------------
-    # TAP vs HOLD logic
+    # TAP / HOLD resolution
     # -------------------------------------------------------------
     async def _press_lifecycle(self, button: str):
-        await asyncio.sleep(self.ctrl.utils._hold_time)
+        """Differentiate TAP vs HOLD."""
+        hold_time = self.ctrl.utils._hold_time
 
+        await asyncio.sleep(hold_time)
+
+        # If released → TAP
         if not self._pressed.get(button):
-            return  # TAP handled on release
+            return
 
-        # HOLD → start continuous motion
-        direction = "raise" if button == "raise" else "lower"
-        await self._start_motion(direction)
+        # HOLD → continuous open/close
+        if button == "raise":
+            await self._open_continuous()
+        else:
+            await self._close_continuous()
 
     async def _release_lifecycle(self, button: str):
-        now = time.time()
+        """Handle tap step & always stop."""
+        hold_time = self.ctrl.utils._hold_time
+        now = asyncio.get_event_loop().time()
         start = self._press_ts.get(button, now)
-        elapsed = now - start
 
-        pos = self._get_position()
+        short_press = (now - start) < hold_time
+        position = self._get_position()
 
-        # Short press → step
-        if elapsed < self.ctrl.utils._hold_time and pos is not None:
-            await self._step(button, pos)
+        if short_press and position is not None:
+            await self._step(button, position)
 
-        # Always stop after release
+        # ALWAYS stop movement
         await self._stop()
 
     # -------------------------------------------------------------
-    # Position helpers
+    # POSITION HELPERS
     # -------------------------------------------------------------
     def _get_position(self) -> Optional[int]:
         state = self.ctrl.utils.get_entity_state()
@@ -124,15 +130,12 @@ class CoverActions:
         return state.attributes.get("current_position")
 
     # -------------------------------------------------------------
-    # Domain operations
+    # DOMAIN ACTIONS
     # -------------------------------------------------------------
-    async def _start_motion(self, direction: str):
-        svc = "open_cover" if direction == "raise" else "close_cover"
-
-        await self.ctrl.utils.call_service(svc, {}, domain="cover")
-
-    async def _open(self):
+    async def _open_to_pos(self):
         pos = self.ctrl.conf.cover_open_pos
+
+        # If open_pos = 100 → standard open
         if pos == 100:
             await self.ctrl.utils.call_service("open_cover", {}, domain="cover")
         else:
@@ -140,35 +143,27 @@ class CoverActions:
                 "set_cover_position", {"position": pos}, domain="cover"
             )
 
-    async def _close(self):
+    async def _close_full(self):
+        await self.ctrl.utils.call_service("close_cover", {}, domain="cover")
+
+    async def _open_continuous(self):
+        await self.ctrl.utils.call_service("open_cover", {}, domain="cover")
+
+    async def _close_continuous(self):
         await self.ctrl.utils.call_service("close_cover", {}, domain="cover")
 
     async def _stop(self):
         await self.ctrl.utils.call_service("stop_cover", {}, domain="cover")
 
     async def _step(self, button: str, pos: int):
+        """One-step increment/decrement."""
         step_pct = self.ctrl.conf.cover_step_pct
 
-        new_pos = (
-            min(100, pos + step_pct)
-            if button == "raise"
-            else max(0, pos - step_pct)
-        )
+        if button == "raise":
+            new_pos = min(100, pos + step_pct)
+        else:
+            new_pos = max(0, pos - step_pct)
 
         await self.ctrl.utils.call_service(
             "set_cover_position", {"position": new_pos}, domain="cover"
         )
-
-    # -------------------------------------------------------------
-    # RESET STATE (prevent runaway after reload)
-    # -------------------------------------------------------------
-    def reset_state(self):
-        for t in self._tasks.values():
-            if t and not t.done():
-                t.cancel()
-
-        for key in self._pressed:
-            self._pressed[key] = False
-            self._tasks[key] = None
-
-        self._press_ts.clear()
