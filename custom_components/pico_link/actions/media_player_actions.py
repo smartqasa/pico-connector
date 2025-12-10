@@ -18,7 +18,7 @@ class MediaPlayerActions:
     - off   → mute OR turn_off
     - raise → volume up (tap = step, hold = ramp)
     - lower → volume down (tap = step, hold = ramp)
-    - stop  → custom middle_button actions, else play/pause toggle
+    - stop  → custom middle_button actions, else mute/unmute toggle
     """
 
     def __init__(self, ctrl: "PicoController") -> None:
@@ -48,8 +48,8 @@ class MediaPlayerActions:
                     for action in actions:
                         asyncio.create_task(self.ctrl.utils.execute_button_action(action))
                 else:
-                    # Default STOP behavior → play/pause toggle
-                    asyncio.create_task(self._play_pause())
+                    # Default STOP behavior → mute/unmute toggle
+                    asyncio.create_task(self._toggle_mute())
 
                 return
 
@@ -147,6 +147,7 @@ class MediaPlayerActions:
             if not self._pressed.get(button):
                 return  # tap only
 
+            # HOLD → continuous ramp
             while self._pressed.get(button):
                 await self._step_volume(button)
                 await asyncio.sleep(self.ctrl.utils._step_time)
@@ -155,13 +156,22 @@ class MediaPlayerActions:
             pass
 
     # -------------------------------------------------------------
-    # STOP DEFAULT = PLAY/PAUSE
+    # STOP DEFAULT = MUTE/UNMUTE
     # -------------------------------------------------------------
-    async def _play_pause(self):
-        """Default STOP = play/pause toggle."""
+    async def _toggle_mute(self):
+        """Default STOP = mute/unmute toggle."""
+
+        state = self.ctrl.utils.get_entity_state()
+        if not state:
+            return
+
+        is_muted = state.attributes.get("is_volume_muted")
+
+        new_val = not bool(is_muted)
+
         await self.ctrl.utils.call_service(
-            "media_play_pause",
-            {},
+            "volume_mute",
+            {"is_volume_muted": new_val},
             domain="media_player",
         )
 

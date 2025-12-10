@@ -12,12 +12,12 @@
 
 ---
 
-## 🧠 What Is Pico Link?
+# 🧠 Overview
 
-**Pico Link** turns any **Lutron Caséta Pico Remote** — including the new **P2B
-paddle Pico** — into a fully programmable controller for Home Assistant.
+**Pico Link** transforms any **Lutron Caséta Pico Remote** — including the **P2B
+Paddle Pico** — into a powerful, domain-aware controller for Home Assistant.
 
-Pico Link listens directly to:
+It listens directly to:
 
 ```
 lutron_caseta_button_event
@@ -25,28 +25,34 @@ lutron_caseta_button_event
 
 and provides:
 
-- Tap and hold detection
-- Step and ramp logic
-- Per-domain action handling
-- 4-button scene execution
-- Middle-button (STOP) behavior that adapts to your domain
-- Placeholder expansion for 3BRL custom actions
-- Full validation of configuration
+- Tap vs hold detection
+- Step and ramp behavior
+- Domain-specific logic (lights, fans, covers, media, switches)
+- STOP behavior per domain (3BRL)
+- Scene execution for 4-button Picos
+- Placeholder expansion for `middle_button:`
+- Strong configuration validation
 
-### Supported Pico models
+No automations needed — just use your Pico like a native controller.
 
-- **P2B** — Paddle
-- **2B** — Two Button
-- **3BRL** — On / Raise / Lower / Off / Stop
-- **4B** — Scene Pico
+---
+
+# 🧭 Pico Types at a Glance
+
+| Pico Type | Layout                          | Exposed Buttons                           | Hold Support | STOP?             | Typical Use                 | Notes                                       |
+| --------- | ------------------------------- | ----------------------------------------- | ------------ | ----------------- | --------------------------- | ------------------------------------------- |
+| **P2B**   | Paddle ON/OFF                   | `on`, `off`                               | ✔ Yes       | Logical STOP only | Lights, fans, covers, media | Hold mapped internally to raise/lower logic |
+| **2B**    | Small ON/OFF                    | `on`, `off`                               | ✘ No         | ✘ No              | Simple switches             | Tap-only                                    |
+| **3BRL**  | On / Raise / Lower / Off / Stop | `on`, `raise`, `lower`, `off`, `stop`     | ✔ Yes       | ✔ Yes            | Full device control         | STOP uses domain defaults or overrides      |
+| **4B**    | 4 Scenes                        | `button_1`, `button_2`, `button_3`, `off` | ✘ No         | ✘ No              | Scenes/scripts              | No domain control                           |
 
 ---
 
 # 🚀 Installation
 
-## 📦 Install via HACS (Recommended)
+## 📦 Install via HACS (recommended)
 
-1. Go to **HACS → Integrations**
+1. Open **HACS → Integrations**
 2. Click **⋮ → Custom Repositories**
 3. Add:
 
@@ -54,19 +60,19 @@ and provides:
 https://github.com/smartqasa/pico-link
 ```
 
-4. Select **Integration**
-5. Search for **Pico Link** and install
+4. Choose **Integration**
+5. Install **Pico Link**
 6. Restart Home Assistant
 
 ## 📁 Manual Installation
 
-Copy this folder into:
+Copy into:
 
 ```
 config/custom_components/pico_link/
 ```
 
-Restart Home Assistant.
+Restart HA.
 
 ---
 
@@ -80,19 +86,13 @@ pico_link:
   devices: …
 ```
 
-### Every device must specify:
+Each Pico **must** define:
 
-- A Pico **type**
-- A **device_id** or **name**
-- **Exactly one** domain (except 4B)
-- Optional behavior settings
-- Optional defaults inherited from the global `defaults:` block
+- `type:`
+- `device_id:` or `name:`
+- One domain (except 4B)
 
----
-
-# 🔧 Valid Domains
-
-Each non-4B Pico must control **exactly one**:
+Valid domains:
 
 ```
 lights:
@@ -102,246 +102,280 @@ media_players:
 switches:
 ```
 
-A Pico cannot control two domains at once.
-
-4B Picos do **not** require a domain.
+4B uses `buttons:` instead.
 
 ---
 
 # 📊 Configuration Parameters
 
-| Parameter                                                   | Required?                | Default | Description                     |
-| ----------------------------------------------------------- | ------------------------ | ------- | ------------------------------- |
-| `type`                                                      | ✔                       | —       | `P2B`, `2B`, `3BRL`, `4B`       |
-| `name` / `device_id`                                        | ✔                       | —       | Identify the Pico in HA         |
-| `lights` / `fans` / `covers` / `switches` / `media_players` | One required (except 4B) | —       | Domain linkage                  |
-| `middle_button`                                             | 3BRL only                | `[]`    | Overrides default STOP behavior |
-| `buttons`                                                   | 4B only                  | `{}`    | Scene/action mappings           |
-| `hold_time_ms`                                              | optional                 | 250     | Hold detection threshold        |
-| `step_time_ms`                                              | optional                 | 750     | Ramp interval                   |
-| `cover_open_pos`                                            | optional                 | 100     | Target position for ON          |
-| `cover_step_pct`                                            | optional                 | 10      | Raise/lower step size           |
-| `fan_on_pct`                                                | optional                 | 100     | ON speed                        |
-| `fan_speeds`                                                | optional                 | 6       | Valid: 4 or 6                   |
-| `light_on_pct`                                              | optional                 | 100     | Brightness for ON               |
-| `light_low_pct`                                             | optional                 | 1       | Min dimming level               |
-| `light_step_pct`                                            | optional                 | 10      | Dimming step                    |
-| `media_player_vol_step`                                     | optional                 | 10      | Volume step (1–20)              |
+| Field                   | Required     | Default | Description                |
+| ----------------------- | ------------ | ------- | -------------------------- |
+| `type`                  | ✔           | —       | Pico hardware type         |
+| `name` / `device_id`    | ✔           | —       | Identify Pico              |
+| Domain (`lights` etc.)  | ✔ except 4B | —       | Target domain              |
+| `buttons`               | 4B only      | `{}`    | Scene/action mappings      |
+| `middle_button`         | 3BRL only    | `[]`    | STOP overrides             |
+| `hold_time_ms`          | optional     | 250     | Hold threshold             |
+| `step_time_ms`          | optional     | 750     | Ramp interval              |
+| `cover_open_pos`        | optional     | 100     | ON → open to this position |
+| `cover_step_pct`        | optional     | 10      | Raise/lower step           |
+| `fan_on_pct`            | optional     | 100     | ON fan speed               |
+| `fan_speeds`            | optional     | 6       | Allowed: 4 or 6            |
+| `light_on_pct`          | optional     | 100     | Brightness for ON          |
+| `light_low_pct`         | optional     | 1       | Min dim level              |
+| `light_step_pct`        | optional     | 10      | Step size                  |
+| `media_player_vol_step` | optional     | 10      | Volume step size           |
 
 ---
 
-# 🔍 Button Behavior (Unified Across All Picos)
+# 🎮 Domain Behavior Summary
 
-## 💡 **Lights**
+## 💡 Lights
 
-- ON → turn on to `light_on_pct`
-- OFF → turn off
-- RAISE → tap=step, hold=ramp up
-- LOWER → tap=step, hold=ramp down
-- STOP → **no-op** unless overridden via `middle_button`
-
-## 🌀 **Fans**
-
-- ON → set percentage to `fan_on_pct`
-- OFF → turn_off
-- RAISE/LOWER → tap=step, hold=ramp
-- STOP → **reverse direction**
-
-## 🪟 **Covers**
-
-- ON → open or move to `cover_open_pos`
-- OFF → close
-- RAISE/LOWER → step or ramp position
-- STOP → **stop_cover**
-
-## 🎵 **Media Players**
-
-- ON → turn_on + unmute
-- OFF → turn_off + mute
-- RAISE/LOWER → step/ramp volume
-- STOP → **play/pause toggle** (unless overridden)
-
-## 🔌 **Switches**
-
-- ON → turn_on
-- OFF → turn_off
-- RAISE, LOWER, STOP → no-op
+| Button | Behavior                  |
+| ------ | ------------------------- |
+| ON     | turn_on → `light_on_pct`  |
+| OFF    | turn_off                  |
+| RAISE  | step or ramp up           |
+| LOWER  | step or ramp down         |
+| STOP   | no-op (unless overridden) |
 
 ---
 
-# 📘 Pico Behavior By Type
+## 🌀 Fans
 
-| Pico Type | Buttons                 | Hold? | STOP behavior                        |
-| --------- | ----------------------- | ----- | ------------------------------------ |
-| **P2B**   | on/off                  | yes   | per-domain STOP                      |
-| **2B**    | on/off                  | no    | no STOP                              |
-| **3BRL**  | on/raise/lower/off/stop | yes   | STOP = domain default (or overrides) |
-| **4B**    | 4 scene buttons         | no    | no STOP; uses `buttons:`             |
+| Button | Behavior                      |
+| ------ | ----------------------------- |
+| ON     | set_percentage → `fan_on_pct` |
+| OFF    | turn_off                      |
+| RAISE  | step/ramp up                  |
+| LOWER  | step/ramp down                |
+| STOP   | reverse_direction             |
 
 ---
 
-# 🚦 Defaults: How They Work
+## 🪟 Covers
 
-The `defaults:` block applies to **all devices**, unless overridden.
+| Button | Behavior                      |
+| ------ | ----------------------------- |
+| ON     | open / go to `cover_open_pos` |
+| OFF    | close                         |
+| RAISE  | step/ramp open                |
+| LOWER  | step/ramp close               |
+| STOP   | stop_cover                    |
 
-Example:
+---
+
+## 🎵 Media Players
+
+| Button   | Behavior                 |
+| -------- | ------------------------ |
+| ON       | turn_on + unmute         |
+| OFF      | turn_off + mute          |
+| RAISE    | step/ramp volume up      |
+| LOWER    | step/ramp volume down    |
+| **STOP** | **toggle mute / unmute** |
+
+---
+
+## 🔌 Switches
+
+| Button               | Behavior |
+| -------------------- | -------- |
+| ON                   | turn_on  |
+| OFF                  | turn_off |
+| RAISE / LOWER / STOP | no-op    |
+
+---
+
+# 🔁 How Defaults Work
+
+You can define global defaults:
 
 ```yaml
 pico_link:
   defaults:
     hold_time_ms: 300
-    step_time_ms: 500
-    light_on_pct: 75
+    light_step_pct: 12
+```
+
+Any device may:
+
+- Inherit defaults
+- Override specific values
+- Override or accept default STOP logic (3BRL)
+
+### Using a default middle_button
+
+```yaml
+pico_link:
+  defaults:
     middle_button:
       - action: light.turn_on
         target:
           entity_id: lights
         data:
-          brightness_pct: 85
+          brightness_pct: 80
 
   devices:
     - name: Living Room Pico
       type: 3BRL
       lights:
         - light.living_room
-      middle_button: default # inherits from defaults
-```
-
-If a device overrides a value:
-
-```yaml
-hold_time_ms: 150
-```
-
-that device uses its own value; all others use the default.
-
-4B scenes do **not** inherit defaults.
-
----
-
-# 📁 Example Configurations
-
-## ✔ P2B (Paddle Pico controlling lights)
-
-```yaml
-pico_link:
-  devices:
-    - device_id: 1551fa9867f7b1e58790823d6b92d911
-      type: P2B
-      lights:
-        - light.bedroom_lights
+      middle_button: default
 ```
 
 ---
 
-## ✔ 2B (simple switch controller)
+# 🧩 Placeholder Expansion (3BRL Only)
+
+Inside `middle_button:` you may use:
+
+| Placeholder     | Expands To              |
+| --------------- | ----------------------- |
+| `lights`        | the device's light list |
+| `fans`          | assigned fans           |
+| `covers`        | assigned covers         |
+| `media_players` | assigned media players  |
+| `switches`      | assigned switches       |
+
+Example:
 
 ```yaml
-pico_link:
-  devices:
-    - name: Bedside Pico
-      type: 2B
-      switches:
-        - switch.bedside_lamp
+entity_id:
+  - lights
+  - light.extra_lamp
 ```
 
 ---
 
-## ✔ 3BRL with defaults + override
+# 🛡 Validation Rules
+
+Pico Link enforces:
+
+- One domain per device (except 4B)
+- Valid Pico type
+- Valid fan speed count (`4` or `6`)
+- Correct middle_button usage
+- Valid 4B button mappings
+- Numeric ranges validated
+
+If anything is invalid, Home Assistant raises a clear configuration error.
+
+---
+
+# 📘 Full Configuration Example
+
+Below is a complete configuration demonstrating all device types, defaults,
+overrides, placeholder expansion, and typical use cases.
 
 ```yaml
 pico_link:
+  # ------------------------------------------------------------
+  # GLOBAL DEFAULTS
+  # ------------------------------------------------------------
   defaults:
-    light_step_pct: 15
-    hold_time_ms: 300
+    hold_time_ms: 250
+    step_time_ms: 600
+
+    light_on_pct: 85
+    light_step_pct: 12
+    light_low_pct: 1
+
+    fan_on_pct: 60
+    fan_speeds: 6
+
+    cover_open_pos: 100
+    cover_step_pct: 10
+
+    media_player_vol_step: 8
+
     middle_button:
       - action: light.turn_on
         target:
           entity_id: lights
         data:
-          brightness_pct: 50
+          brightness_pct: 70
+          kelvin: 2700
 
+  # ------------------------------------------------------------
+  # DEVICES
+  # ------------------------------------------------------------
   devices:
-    - name: Living Room
-      type: 3BRL
+    # 1. Paddle Pico controlling lights
+    - name: Kitchen Paddle
+      type: P2B
       lights:
-        - light.living_room
-      middle_button: default # uses the default middle-button actions
+        - light.kitchen_main
 
-    - name: Dining Room
+    # 2. Two-button Pico controlling a switch
+    - name: Closet Pico
+      type: 2B
+      switches:
+        - switch.closet_light
+
+    # 3. 3BRL for lighting (inherits defaults)
+    - name: Master Bedroom Remote
       type: 3BRL
       lights:
-        - light.dining_room
+        - light.master_overhead
+        - light.master_lamps
+      middle_button: default
+
+    # 4. 3BRL for fan (overrides defaults)
+    - name: Living Room Fan Control
+      type: 3BRL
+      fans:
+        - fan.living_room_fan
+      fan_on_pct: 40
+      hold_time_ms: 350
       middle_button:
-        - action: light.turn_on
+        - action: fan.set_direction
           target:
-            entity_id: light.dining_room
+            entity_id: fans
           data:
-            brightness_pct: 40
-```
+            direction: reverse
 
----
+    # 5. 3BRL controlling a cover
+    - name: Shade Controller
+      type: 3BRL
+      covers:
+        - cover.living_room_shade
+      cover_open_pos: 75
+      middle_button: [] # STOP = stop_cover (default)
 
-## ✔ 4B Scene Pico
+    # 6. 3BRL controlling a media player
+    - name: Office Media Remote
+      type: 3BRL
+      media_players:
+        - media_player.office_sonos
+      media_player_vol_step: 5
+      middle_button: [] # STOP = mute/unmute (default)
 
-```yaml
-pico_link:
-  devices:
+    # 7. 4-Button Scene Pico
     - name: Scene Controller
       type: 4B
       buttons:
         button_1:
           - action: scene.turn_on
-            target: { entity_id: scene.movie }
+            target:
+              entity_id: scene.movie_mode
+
         button_2:
-          - action: script.dim_lights
+          - action: script.dim_lights_soft
+
         button_3:
           - action: light.turn_off
-            target: { entity_id: light.kitchen }
+            target:
+              entity_id:
+                - light.kitchen
+                - light.living_room
+
         off:
           - action: homeassistant.turn_off
-            target: { area_id: living_room }
+            target:
+              area_id: main_floor
 ```
-
----
-
-# 🧩 Placeholder Expansion (3BRL only)
-
-Inside `middle_button:`, you may reference **device-level entity lists**:
-
-| Placeholder     | Expands To                       |
-| --------------- | -------------------------------- |
-| `lights`        | the lights assigned to this Pico |
-| `fans`          | assigned fans                    |
-| `covers`        | assigned covers                  |
-| `media_players` | assigned media players           |
-| `switches`      | assigned switches                |
-
-Example:
-
-```yaml
-middle_button:
-  - action: light.turn_on
-    target:
-      entity_id:
-        - lights
-        - light.extra_lamp
-```
-
----
-
-# 🔍 Validation Rules
-
-Pico Link enforces:
-
-- ✔ Exactly **one** domain per Pico (except 4B)
-- ✔ Pico type must be valid
-- ✔ `fan_speeds` must be **4 or 6**
-- ✔ `buttons:` must be valid for 4B
-- ✔ `middle_button` only valid for 3BRL
-- ✔ All numeric settings must fall within safe ranges
-
-If validation fails, HA reports a meaningful configuration error.
 
 ---
 
