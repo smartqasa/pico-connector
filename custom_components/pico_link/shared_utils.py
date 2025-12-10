@@ -1,4 +1,3 @@
-# shared_utils.py
 from __future__ import annotations
 import asyncio
 import logging
@@ -14,7 +13,7 @@ _LOGGER = logging.getLogger(__name__)
 class SharedUtils:
     """
     PURE utilities shared by all action modules.
-    Zero domain-specific logic.
+    Zero domain-specific state.
     """
 
     def __init__(self, ctrl: "PicoController") -> None:
@@ -22,19 +21,16 @@ class SharedUtils:
         self.hass: HomeAssistant = ctrl.hass
         self.conf = ctrl.conf
 
-        # Timing
+        # Timing parameters
         self._hold_time = self.conf.hold_time_ms / 1000.0
         self._step_time = self.conf.step_time_ms / 1000.0
 
-        # References to controller-managed state
-        self._pressed = ctrl._pressed
-        self._tasks = ctrl._tasks
+        # Removed controller._pressed / controller._tasks usage entirely
 
     # -------------------------------------------------------------
     # ENTITY RESOLUTION
     # -------------------------------------------------------------
     def entity_domain(self) -> Optional[str]:
-        """Return the domain this Pico controls."""
         if self.conf.covers:
             return "cover"
         if self.conf.lights:
@@ -48,7 +44,6 @@ class SharedUtils:
         return None
 
     def primary_entity(self) -> Optional[str]:
-        """Return the first configured entity ID."""
         if self.conf.covers:
             return self.conf.covers[0]
         if self.conf.lights:
@@ -62,7 +57,6 @@ class SharedUtils:
         return None
 
     def get_entity_state(self):
-        """Return HA state for primary entity."""
         entity_id = self.primary_entity()
         if not entity_id:
             return None
@@ -79,10 +73,6 @@ class SharedUtils:
         domain: str,
         continue_on_error: bool = False,
     ) -> None:
-        """
-        The ONLY API action modules should use to call HA services.
-        """
-
         match domain:
             case "cover":
                 entities = self.conf.covers
@@ -119,17 +109,9 @@ class SharedUtils:
                 _LOGGER.error(msg)
 
     # -------------------------------------------------------------
-    # ACTION EXECUTION (Scenes & 4B buttons)
+    # ACTION EXECUTION (Scenes & 4B)
     # -------------------------------------------------------------
     async def execute_button_action(self, action):
-        """
-        Executes an HA action dict or a list of them.
-
-        Format:
-            {"action": "light.turn_on", "target": {...}, "data": {...}}
-        """
-
-        # List → run each
         if isinstance(action, list):
             for a in action:
                 await self.execute_button_action(a)
@@ -143,7 +125,6 @@ class SharedUtils:
             )
             return
 
-        # Parse domain + service
         try:
             domain, service = action["action"].split(".", 1)
         except Exception:

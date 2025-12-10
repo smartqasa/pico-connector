@@ -330,12 +330,28 @@ class LightActions:
     async def _ramp(self, button: str, direction: int):
         """
         Continuous ramp:
-        step by light_step_pct every step_time, while the given
-        button remains pressed.
+        step by light_step_pct every step_time
+        UNTIL:
+        - button is released
+        - OR max iterations (50) reached
         """
 
         step_time = self.ctrl.utils._step_time
+        MAX_STEPS = 50     # Your chosen hard limit
+
+        iterations = 0
 
         while self._pressed.get(button, False):
+            if iterations >= MAX_STEPS:
+                _LOGGER.warning(
+                    "LightActions: ramp stopped after %s steps (safety limit) "
+                    "for device %s button %s",
+                    MAX_STEPS,
+                    self.ctrl.conf.device_id,
+                    button,
+                )
+                break
+
             await self._step_brightness(direction)
+            iterations += 1
             await asyncio.sleep(step_time)
