@@ -14,13 +14,15 @@ _LOGGER = logging.getLogger(__name__)
 class CoverActions:
     """
     Encapsulates all cover-specific logic:
-    - on  → open
+
+    - on  → open (respect cover_open_pos)
     - off → close
     - stop → stop
+
     - raise/lower:
-        * tap  = step position +/- step_pct
-        * hold = open/close
-        * release = stop
+        * tap  = step position +/- cover_step_pct
+        * hold = open/close continuously
+        * release = stop always
     """
 
     def __init__(self, ctrl: "PicoController") -> None:
@@ -31,13 +33,8 @@ class CoverActions:
     # PUBLIC ENTRY POINTS
     # -------------------------------------------------------------
     def handle_press(self, button: str) -> None:
-        """
-        Dispatches button press:
-        - raise/lower → tap/hold logic
-        - on/off → simple open/close
-        - stop → stop immediately
-        """
         match button:
+
             case "on":
                 asyncio.create_task(self._open())
 
@@ -49,41 +46,36 @@ class CoverActions:
 
             case "raise" | "lower":
                 self._press_ts[button] = asyncio.get_event_loop().time()
-                self.ctrl._pressed[button] = True
+                self.ctrl.utils._pressed[button] = True
                 asyncio.create_task(self._press_lifecycle(button))
 
             case _:
-                _LOGGER.debug(
-                    "CoverActions: unrecognized button '%s' for cover domain",
-                    button,
-                )
+                _LOGGER.debug("CoverActions: unknown button '%s'", button)
 
     def handle_release(self, button: str) -> None:
-        """
-        Dispatch release:
-        - raise/lower → tap logic + stop
-        - on/off/stop → no-op
-        """
         if button in ("raise", "lower"):
             asyncio.create_task(self._release_lifecycle(button))
 
     # -------------------------------------------------------------
-    # INTERNAL LIFECYCLES FOR RAISE/LOWER
+    # TAP/HOLD LIFECYCLES
     # -------------------------------------------------------------
     async def _press_lifecycle(self, button: str):
-        """Wait to determine tap/hold."""
-        await asyncio.sleep(self.ctrl._hold_time)
+        """Wait hold_time to decide TAP vs HOLD."""
 
-        if not self.ctrl._pressed.get(button, False):
-            return  # TAP will be handled in release
+        await asyncio.sleep(self.ctrl.utils._hold_time)
 
-        # HOLD → continuous motion
+        # If button was released → it's a TAP (handled in release)
+        if not self.ctrl.utils._pressed.get(button, False):
+            return
+
+        # HOLD → begin open or close movement
         direction = "raise" if button == "raise" else "lower"
         await self._start_motion(direction)
 
     async def _release_lifecycle(self, button: str):
-        """Release: tap = step; always stop movement."""
-        self.ctrl._pressed[button] = False
+        """Release event: TAP = step, then always STOP."""
+
+        self.ctrl.utils._pressed[button] = False
 
         now = asyncio.get_event_loop().time()
         start = self._press_ts.get(button, now)
@@ -91,58 +83,79 @@ class CoverActions:
 
         pos = self._get_position()
 
-        # TAP: short press → step movement
-        if elapsed < self.ctrl._hold_time and pos is not None:
+        # TAP if short press
+        if elapsed < self.ctrl.utils._hold_time and pos is not None:
             await self._step(button, pos)
 
-        # Always stop
+        # Always stop cover motion
         await self._stop()
 
     # -------------------------------------------------------------
-    # DOMAIN ACTION IMPLEMENTATIONS
+    # COVER POSITION HELPERS
     # -------------------------------------------------------------
     def _get_position(self) -> Optional[int]:
-        state = self.ctrl.get_entity_state()
+        state = self.ctrl.utils.get_entity_state()
         if not state:
             return None
         return state.attributes.get("current_position")
 
+    # -------------------------------------------------------------
+    # DOMAIN ACTIONS
+    # -------------------------------------------------------------
     async def _start_motion(self, direction: str):
         svc = "open_cover" if direction == "raise" else "close_cover"
-        await self.ctrl._call_entity_service(svc, {})
+
+        await self.ctrl.utils.call_service(
+            svc,
+            {},
+            domain="cover",
+        )
 
     async def _open(self):
-        """
-        OPEN behavior:
-        - If open_pos == 100 → fully open using open_cover
-        - Otherwise          → set_cover_position to open_pos
-        """
         pos = self.ctrl.conf.cover_open_pos
 
+        # If fully open → use open_cover
         if pos == 100:
-            await self.ctrl._call_entity_service("open_cover", {})
+            await self.ctrl.utils.call_service(
+                "open_cover",
+                {},
+                domain="cover",
+            )
             return
 
-        await self.ctrl._call_entity_service(
+        # Otherwise go to the configured open_pos
+        await self.ctrl.utils.call_service(
             "set_cover_position",
-            {"position": pos}
+            {"position": pos},
+            domain="cover",
         )
 
     async def _close(self):
-        await self.ctrl._call_entity_service("close_cover", {})
+        await self.ctrl.utils.call_service(
+            "close_cover",
+            {},
+            domain="cover",
+        )
 
     async def _stop(self):
-        await self.ctrl._call_entity_service("stop_cover", {})
+        await self.ctrl.utils.call_service(
+            "stop_cover",
+            {},
+            domain="cover",
+        )
 
     async def _step(self, button: str, pos: int):
-        """Move cover position by configured step_pct."""
-        step_pct = self.ctrl.conf.cover_step_pct or 5
+        """Move % up/down based on configured step."""
+
+        step_pct = self.ctrl.conf.cover_step_pct
 
         if button == "raise":
             new_pos = min(100, pos + step_pct)
         else:
             new_pos = max(0, pos - step_pct)
 
-        await self.ctrl._call_entity_service(
-            "set_cover_position", {"position": new_pos}
+        await self.ctrl.utils.call_service(
+            "set_cover_position",
+            {"position": new_pos},
+            domain="cover",
         )

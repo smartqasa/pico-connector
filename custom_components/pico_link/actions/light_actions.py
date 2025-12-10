@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
+import time
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from ..controller import PicoController
@@ -13,156 +14,188 @@ _LOGGER = logging.getLogger(__name__)
 
 class LightActions:
     """
-    Encapsulates all light-specific logic:
+    Unified light action module implementing the full action API.
 
-    - on: turn_on → light_on_pct
-    - off: turn_off
-    - raise/lower:
-        * tap  = step brightness +/- light_step_pct
-        * hold = ramp using SharedBehaviors._ramp()
-        * release = stop ramp
-    - stop: cancels ramp (lights have no native stop)
+    Profiles:
+        - only route press/release events
+        - do NOT contain light logic
+
+    LightActions:
+        - tap vs hold
+        - stepping
+        - ramping
+        - on/off/low_pct behavior
+        - HA service calls
     """
 
     def __init__(self, ctrl: "PicoController") -> None:
         self.ctrl = ctrl
+
+        self._pressed: dict[str, bool] = {"raise": False, "lower": False}
+
         self._press_ts: dict[str, float] = {}
+        self._tasks: dict[str, Optional[asyncio.Task]] = {
+            "raise": None,
+            "lower": None,
+        }
 
-    # -------------------------------------------------------------
-    # PUBLIC ENTRY POINTS
-    # -------------------------------------------------------------
-    def handle_press(self, button: str) -> None:
+    # ==============================================================
+    # API METHODS (called by profiles)
+    # ==============================================================
+
+    # --- ON --------------------------------------------------------
+    def press_on(self):
+        asyncio.create_task(self._turn_on())
+
+    def release_on(self):
+        pass
+
+    # --- OFF -------------------------------------------------------
+    def press_off(self):
+        asyncio.create_task(self._turn_off())
+
+    def release_off(self):
+        pass
+
+    # --- STOP ------------------------------------------------------
+    def press_stop(self):
         """
-        Profiles call this for all button presses.
+        STOP = execute middle_button actions (Lutron-like)
+        or no-op if none defined.
         """
+        actions = self.ctrl.conf.middle_button
 
-        match button:
+        if not actions:
+            _LOGGER.debug("Light STOP pressed: no middle_button actions configured")
+            return
 
-            case "on":
-                asyncio.create_task(self._turn_on())
+        for action in actions:
+            asyncio.create_task(self.ctrl.utils.execute_button_action(action))
 
-            case "off":
-                asyncio.create_task(self._turn_off())
+    def release_stop(self):
+        pass
 
-            case "stop":
-                # Lights have no real stop → just cancel ramp
-                self._cancel_ramp()
-                return
+    # --- RAISE -----------------------------------------------------
+    def press_raise(self):
+        self._start_raise_lower("raise", direction=1)
 
-            case "raise" | "lower":
-                self._handle_raise_lower_press(button)
+    def release_raise(self):
+        self._stop_raise_lower("raise")
 
-            case _:
-                _LOGGER.debug("LightActions: unrecognized button '%s'", button)
+    # --- LOWER -----------------------------------------------------
+    def press_lower(self):
+        self._start_raise_lower("lower", direction=-1)
 
-    def handle_release(self, button: str) -> None:
-        """
-        Release only applies to raise/lower:
-        - Cancel ramp
-        """
-        if button in ("raise", "lower"):
-            self._cancel_ramp()
+    def release_lower(self):
+        self._stop_raise_lower("lower")
 
-    # -------------------------------------------------------------
-    # HELPERS
-    # -------------------------------------------------------------
-    def _cancel_ramp(self):
-        """Cancel any running ramp task."""
-        for btn in ("raise", "lower"):
-            self.ctrl._pressed[btn] = False
-            task = self.ctrl._tasks.get(btn)
-            if task and not task.done():
-                task.cancel()
-            self.ctrl._tasks[btn] = None
+    # ==============================================================
+    # INTERNAL STATEFUL BEHAVIOR
+    # ==============================================================
 
-    # -------------------------------------------------------------
-    # ON / OFF
-    # -------------------------------------------------------------
-    async def _turn_on(self):
-        pct = self.ctrl.conf.light_on_pct or 100
-        await self.ctrl._call_entity_service(
-            "turn_on",
-            {"brightness_pct": pct},
-        )
+    def _start_raise_lower(self, button: str, direction: int):
+        self._pressed[button] = True
+        self._press_ts[button] = time.time()
 
-    async def _turn_off(self):
-        await self.ctrl._call_entity_service("turn_off", {})
-
-    # -------------------------------------------------------------
-    # RAISE / LOWER PRESS
-    # -------------------------------------------------------------
-    def _handle_raise_lower_press(self, button: str):
-        direction = 1 if button == "raise" else -1
-
-        # Always mark pressed for ramp cancellation
-        self.ctrl._pressed[button] = True
-
-        # STEP immediately (tap behavior)
+        # TAP step immediately
         asyncio.create_task(self._step_brightness(direction))
 
-        # Start HOLD lifecycle
-        self.ctrl._tasks[button] = asyncio.create_task(
-            self._hold_lifecycle(button, direction)
-        )
+        # HOLD → ramp
+        task = asyncio.create_task(self._hold_lifecycle(button, direction))
+        self._tasks[button] = task
 
-    # -------------------------------------------------------------
-    # TAP/HOLD lifecycle
-    # -------------------------------------------------------------
+    def _stop_raise_lower(self, button: str):
+        self._pressed[button] = False
+
+        task = self._tasks.get(button)
+        if task and not task.done():
+            task.cancel()
+
+        self._tasks[button] = None
+
+    # ==============================================================
+    # TAP / HOLD LIFECYCLE
+    # ==============================================================
+
     async def _hold_lifecycle(self, button: str, direction: int):
         try:
-            await asyncio.sleep(self.ctrl._hold_time)
+            await asyncio.sleep(self.ctrl.utils._hold_time)
 
-            # If released → no hold behavior
-            if not self.ctrl._pressed.get(button, False):
-                return
+            if not self._pressed.get(button):
+                return  # TAP only
 
             # HOLD → continuous ramp
-            await self.ctrl._ramp(button, direction)
+            await self._ramp(direction)
 
         except asyncio.CancelledError:
             pass
 
-        finally:
-            self.ctrl._pressed[button] = False
-            self.ctrl._tasks[button] = None
+    # ==============================================================
+    # DOMAIN LOGIC
+    # ==============================================================
 
-    # -------------------------------------------------------------
-    # STEP BRIGHTNESS
-    # -------------------------------------------------------------
+    async def _turn_on(self):
+        pct = self.ctrl.conf.light_on_pct
+
+        await self.ctrl.utils.call_service(
+            "turn_on",
+            {"brightness_pct": pct},
+            domain="light",
+        )
+
+    async def _turn_off(self):
+        await self.ctrl.utils.call_service(
+            "turn_off",
+            {},
+            domain="light",
+        )
+
     async def _step_brightness(self, direction: int):
         """
-        TAP behavior:
-        - Raise/lower brightness by light_step_pct
-        - Never go below light_low_pct
+        TAP = single step brightness change.
         """
 
-        step_pct = self.ctrl.conf.light_step_pct or 10
-        low_pct = self.ctrl.conf.light_low_pct or 1
+        step_pct = self.ctrl.conf.light_step_pct
+        low_pct = self.ctrl.conf.light_low_pct
 
-        state = self.ctrl.get_entity_state()
+        state = self.ctrl.utils.get_entity_state()
         if not state:
             return
 
-        current = state.attributes.get("brightness")
-        if current is None:
+        raw_brightness = state.attributes.get("brightness")
+        if raw_brightness is None:
             current_pct = 0
         else:
             try:
-                current_pct = round((int(current) / 255) * 100)
+                current_pct = round((int(raw_brightness) / 255) * 100)
             except Exception:
                 current_pct = 0
 
-        # Calculate new brightness
         new_pct = current_pct + (step_pct * direction)
 
-        # Clamp minimum for LOWER
+        # Clamp
         if direction < 0:
             new_pct = max(low_pct, new_pct)
+        new_pct = min(100, max(1, new_pct))
 
-        # Clamp max for RAISE
-        new_pct = min(100, new_pct)
-
-        await self.ctrl._call_entity_service(
+        await self.ctrl.utils.call_service(
             "turn_on",
             {"brightness_pct": new_pct},
+            domain="light",
         )
+
+    # ==============================================================
+    # RAMP LOGIC (continuous)
+    # ==============================================================
+
+    async def _ramp(self, direction: int):
+        """
+        Continuous ramp:
+        step by light_step_pct percentage every step_time.
+        """
+
+        step_time = self.ctrl.utils._step_time
+
+        while any(self._pressed.values()):
+            await self._step_brightness(direction)
+            await asyncio.sleep(step_time)

@@ -1,13 +1,20 @@
-from typing import Protocol
+# profiles/profile_base.py
+from __future__ import annotations
+from typing import Protocol, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..controller import PicoController
 
 
 class PicoProfile(Protocol):
     """
-    Each profile must implement these methods so the controller
-    can call them without type checker errors.
+    Every profile must support:
+    - __init__(controller)
+    - handle_press()
+    - handle_release()
     """
 
-    def __init__(self, controller) -> None:
+    def __init__(self, controller: "PicoController") -> None:
         ...
 
     def handle_press(self, button: str) -> None:

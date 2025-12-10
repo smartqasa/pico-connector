@@ -1,5 +1,6 @@
+# profiles/profile_2b.py
 from __future__ import annotations
-import asyncio
+
 import logging
 from typing import TYPE_CHECKING
 
@@ -10,17 +11,52 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class Pico2Button:
-    """Pico2Button: simple ON/OFF on tap."""
+    """
+    Two-button Pico:
+    - ON and OFF only
+    """
 
     def __init__(self, controller: "PicoController") -> None:
         self._ctrl = controller
 
+    # -------------------------------------------------------------
+    # PRESS
+    # -------------------------------------------------------------
     def handle_press(self, button: str) -> None:
-        if button == "on":
-            asyncio.create_task(self._ctrl._short_press_on())
-        elif button == "off":
-            asyncio.create_task(self._ctrl._short_press_off())
+        domain = self._ctrl.utils.entity_domain()
+        if domain is None:
+            _LOGGER.debug("Pico2Button: No domain configured")
+            return
 
+        actions = self._ctrl.actions.get(domain)
+        if actions is None:
+            _LOGGER.debug("Pico2Button: No action module for domain '%s'", domain)
+            return
+
+        match button:
+            case "on":
+                actions.press_on()
+            case "off":
+                actions.press_off()
+            case _:
+                _LOGGER.debug("Pico2Button: unknown button '%s'", button)
+
+    # -------------------------------------------------------------
+    # RELEASE
+    # -------------------------------------------------------------
     def handle_release(self, button: str) -> None:
-        # no hold logic → nothing to cancel
-        pass
+        domain = self._ctrl.utils.entity_domain()
+        if domain is None:
+            return
+
+        actions = self._ctrl.actions.get(domain)
+        if actions is None:
+            return
+
+        match button:
+            case "on":
+                actions.release_on()
+            case "off":
+                actions.release_off()
+            case _:
+                pass

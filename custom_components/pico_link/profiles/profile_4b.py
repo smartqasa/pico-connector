@@ -1,3 +1,4 @@
+# profiles/profile_4b.py
 from __future__ import annotations
 
 import asyncio
@@ -9,25 +10,37 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
-FOUR_BUTTON_TYPES = {"button_1", "button_2", "button_3", "off"}
-
 
 class Pico4ButtonScene:
-    """Pico4ButtonScene: all actions come from config."""
+    """
+    Pico 4-button scene controller:
+    - Each button maps to a YAML-defined list of HA service calls.
+    - Profile triggers scenes directly via controller/utils.
+    - No domain routing used for scenes.
+    """
 
     def __init__(self, controller: "PicoController") -> None:
         self._ctrl = controller
 
+    # -------------------------------------------------------------
+    # PRESS
+    # -------------------------------------------------------------
     def handle_press(self, button: str) -> None:
-        if button not in FOUR_BUTTON_TYPES:
+        scene_map = self._ctrl.conf.buttons
+
+        if button not in scene_map:
+            _LOGGER.debug("Pico4B: button '%s' has no configured scene", button)
             return
 
-        cfg = self._ctrl.conf.buttons.get(button)
-        if not cfg:
-            return
+        scene_actions = scene_map[button]
+        asyncio.create_task(self._ctrl.utils.execute_button_action(scene_actions))
 
-        for action in cfg:
-            asyncio.create_task(self._ctrl._execute_button_action(action))
-
+    # -------------------------------------------------------------
+    # RELEASE
+    # -------------------------------------------------------------
     def handle_release(self, button: str) -> None:
+        """
+        Scene buttons typically do nothing on release.
+        Included only for protocol completeness.
+        """
         pass

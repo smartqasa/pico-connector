@@ -44,6 +44,8 @@ class PicoConfig:
     light_low_pct: int = 0       # 1–100
     light_step_pct: int = 0      # 1–25
 
+    media_player_vol_step: int = 0  # 1–100 (user-facing volume %
+
     # 3BRL only
     middle_button: List[Dict[str, Any]] = field(default_factory=list)
 
@@ -81,13 +83,12 @@ def lookup_device_id(hass, name: str) -> str | None:
 # ================================================================
 def _normalize_int(raw_val, default: int, min_val: int, max_val: int) -> int:
     """Convert to int, apply default, and clamp into [min_val, max_val]."""
-
     try:
         value = int(raw_val)
     except Exception:
         value = default
 
-    # 0 means “not provided,” so apply default
+    # 0 means “not provided”
     if value == 0:
         value = default
 
@@ -167,16 +168,23 @@ def parse_pico_config(
 
     fan_on_pct = _normalize_int(raw.get("fan_on_pct", raw.get("on_pct", 100)), default=100, min_val=1, max_val=100)
 
-    # fan_speeds — strict rule: must be 4 or 6
+    # fan_speeds must be 4 or 6 only
     try:
         fs = int(raw.get("fan_speeds", 6))
     except Exception:
         fs = 6
     fan_speeds = fs if fs in (4, 6) else 6
 
-    light_on_pct  = _normalize_int(raw.get("light_on_pct", raw.get("on_pct", 100)), default=100, min_val=1, max_val=100)
-    light_low_pct = _normalize_int(raw.get("light_low_pct", raw.get("low_pct", 1)), default=1, min_val=1, max_val=100)
-    light_step_pct = _normalize_int(raw.get("light_step_pct", raw.get("step_pct", 10)), default=10, min_val=1, max_val=25)
+    light_on_pct   = _normalize_int(raw.get("light_on_pct",  raw.get("on_pct",  100)), default=100, min_val=1, max_val=100)
+    light_low_pct  = _normalize_int(raw.get("light_low_pct", raw.get("low_pct", 1)),   default=1,   min_val=1, max_val=100)
+    light_step_pct = _normalize_int(raw.get("light_step_pct", raw.get("step_pct", 10)), default=10,  min_val=1, max_val=25)
+
+    media_player_vol_step = _normalize_int(
+        raw.get("media_player_vol_step", 10),
+        default=10,
+        min_val=1,
+        max_val=100,
+    )
 
     # ------------------------------------------------------------
     # Middle button (3BRL only)
@@ -219,12 +227,14 @@ def parse_pico_config(
         light_low_pct=light_low_pct,
         light_step_pct=light_step_pct,
 
+        media_player_vol_step=media_player_vol_step,
+
         middle_button=middle_button,
         buttons=raw.get("buttons", {}),
     )
 
     # ------------------------------------------------------------
-    # Expand placeholders in middle_button
+    # Placeholder expansion in middle_button
     # ------------------------------------------------------------
     PLACEHOLDERS = {
         "covers": conf.covers,
@@ -251,7 +261,7 @@ def parse_pico_config(
             if isinstance(eid, str) and eid in PLACEHOLDERS:
                 new_action["target"] = {"entity_id": PLACEHOLDERS[eid]}
 
-            # List with mixed placeholders
+            # Mixed placeholder list
             elif isinstance(eid, list):
                 expanded = []
                 for x in eid:
