@@ -282,7 +282,6 @@ pico_link:
     light_low_pct: 1
 
     fan_on_pct: 60
-    fan_speeds: 6
 
     cover_open_pos: 100
     cover_step_pct: 10

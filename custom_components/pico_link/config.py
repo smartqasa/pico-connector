@@ -215,12 +215,6 @@ def parse_pico_config(
     fan_on_pct = _normalize_int(merged.get("fan_on_pct", merged.get("on_pct", 100)),
                                 100, 1, 100)
 
-    try:
-        fs = int(merged.get("fan_speeds", 6))
-    except Exception:
-        fs = 6
-    fan_speeds = fs if fs in (4, 6) else 6
-
     light_on_pct   = _normalize_int(merged.get("light_on_pct",  merged.get("on_pct", 100)),
                                     100, 1, 100)
     light_low_pct  = _normalize_int(merged.get("light_low_pct", merged.get("low_pct", 5)),
