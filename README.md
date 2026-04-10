@@ -153,6 +153,7 @@ Values outside these ranges are discouraged.
 | `light_step_pct`        | ✘         | `10`           | Step size (pct)          |
 | `light_transition_on`   | ✘         | `0`            | Fade-in time (seconds)   |
 | `light_transition_off`  | ✘         | `0`            | Fade-out time (seconds)  |
+| `light_on_off_toggle`   | ✘         | `false`        | Use toggle for ON/OFF    |
 | `media_player_vol_step` | ✘         | `10`           | Volume step (pct)        |
 
 ### Light Transitions
@@ -164,6 +165,18 @@ lights are turned ON or OFF via tap actions.
 - When set to `0`, the transition parameter is **not sent** to Home Assistant
 - Transitions apply to **tap ON / OFF only**
 - Step and ramp actions are always instant for responsiveness
+
+### Light Toggle Mode
+
+`light_on_off_toggle` changes the ON and OFF buttons to **toggle** behavior
+instead of their default discrete on/off actions.
+
+- When `true`, both ON and OFF buttons check the current light state and flip it
+- When `false` (default), ON always turns on, OFF always turns off
+- Works with all Pico types (P2B, 2B, 3BRL)
+- For P2B / 2B: tap toggles, hold still ramps (direction unchanged)
+- Useful when a single remote controls one light group and you want either
+  button to work regardless of current state
 
 ---
 
@@ -225,13 +238,13 @@ target:
 
 ### 💡 Lights
 
-| Button | Action                   |
-| ------ | ------------------------ |
-| ON     | turn_on → `light_on_pct` |
-| OFF    | turn_off                 |
-| RAISE  | step / ramp up           |
-| LOWER  | step / ramp down         |
-| STOP   | no-op                    |
+| Button | Action                                                      |
+| ------ | ----------------------------------------------------------- |
+| ON     | turn_on → `light_on_pct` (or toggle if `light_on_off_toggle`) |
+| OFF    | turn_off (or toggle if `light_on_off_toggle`)                 |
+| RAISE  | step / ramp up                                              |
+| LOWER  | step / ramp down                                            |
+| STOP   | no-op                                                       |
 
 ### 🌀 Fans
 
@@ -309,6 +322,15 @@ pico_link:
         - light.bedroom_main
         - light.bedroom_lamps
       middle_button: default
+
+    # 3BRL — lights, toggle mode (ON and OFF both toggle)
+    - name: Living Room Remote
+      type: 3BRL
+      lights:
+        - light.living_room_lamp
+      light_on_off_toggle: true
+      light_transition_on: 1
+      light_transition_off: 1
 
     # 3BRL — fan, custom STOP
     - name: Living Room Fan

@@ -122,22 +122,25 @@ class LightActions:
         ON behavior:
 
         - P2B / 2B:
-            * Tap  -> turn_on(light_on_pct)
+            * Tap  -> turn_on(light_on_pct) [or toggle if light_on_off_toggle]
             * Hold -> ramp brightness up until release
         - Other profiles:
-            * ON is simple turn_on (tap-only)
+            * ON is simple turn_on (tap-only) [or toggle if light_on_off_toggle]
         """
         # Any press = new intent; stop any ongoing motion immediately
         self._abort_motion()
 
         if self._supports_onoff_hold():
             self._start_onoff_hold(button="on", direction=1)
+        elif self.ctrl.conf.light_on_off_toggle:
+            asyncio.create_task(self._toggle())
         else:
             asyncio.create_task(self._turn_on())
 
     def release_on(self):
         if self._supports_onoff_hold():
-            self._finalize_onoff_hold(button="on", tap_action=self._turn_on)
+            tap = self._toggle if self.ctrl.conf.light_on_off_toggle else self._turn_on
+            self._finalize_onoff_hold(button="on", tap_action=tap)
         # For tap-only profiles, ON release is a no-op.
 
     # --- OFF -------------------------------------------------------
@@ -146,22 +149,25 @@ class LightActions:
         OFF behavior:
 
         - P2B / 2B:
-            * Tap  -> turn_off
+            * Tap  -> turn_off [or toggle if light_on_off_toggle]
             * Hold -> ramp brightness down until release
         - Other profiles:
-            * OFF is simple turn_off (tap-only)
+            * OFF is simple turn_off (tap-only) [or toggle if light_on_off_toggle]
         """
         # Any press = new intent; stop any ongoing motion immediately
         self._abort_motion()
 
         if self._supports_onoff_hold():
             self._start_onoff_hold(button="off", direction=-1)
+        elif self.ctrl.conf.light_on_off_toggle:
+            asyncio.create_task(self._toggle())
         else:
             asyncio.create_task(self._turn_off())
 
     def release_off(self):
         if self._supports_onoff_hold():
-            self._finalize_onoff_hold(button="off", tap_action=self._turn_off)
+            tap = self._toggle if self.ctrl.conf.light_on_off_toggle else self._turn_off
+            self._finalize_onoff_hold(button="off", tap_action=tap)
         # For tap-only profiles, OFF release is a no-op.
 
     # --- STOP ------------------------------------------------------
@@ -345,6 +351,16 @@ class LightActions:
             params,
             domain="light",
         )
+
+    async def _toggle(self):
+        """Toggle light on/off based on current state."""
+        state = self.ctrl.utils.get_entity_state()
+        is_on = state and state.state == "on"
+
+        if is_on:
+            await self._turn_off()
+        else:
+            await self._turn_on()
 
     async def _step_brightness(self, direction: int):
         """
