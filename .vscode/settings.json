@@ -6,5 +6,6 @@
       "source.fixAll.ruff": "explicit",
       "source.organizeImports.ruff": "explicit"
     }
-  }
+  },
+  "python.analysis.typeCheckingMode": "basic"
 }

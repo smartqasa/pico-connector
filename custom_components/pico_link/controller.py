@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Mapping, Optional, Tuple
+from typing import Any, Mapping, Optional, Tuple
 
 from homeassistant.core import Event, HomeAssistant, callback
 
-from .actions.cover_actions import CoverActions
-from .actions.fan_actions import FanActions
-
 # Action modules
-from .actions.light_actions import LightActions
-from .actions.media_player_actions import MediaPlayerActions
-from .actions.switch_actions import SwitchActions
+from .actions.base import DomainActions
+from .actions.cover import CoverActions
+from .actions.fan import FanActions
+from .actions.light import LightActions
+from .actions.media_player import MediaPlayerActions
+from .actions.switch import SwitchActions
 from .config import PicoConfig
 from .const import PICO_EVENT_TYPE, PICO_TYPE_MAP, SUPPORTED_BUTTONS
 
@@ -55,7 +55,7 @@ class PicoController:
         self._unsub_event = None
 
         # Domain-level behaviors
-        self.actions: Dict[str, Any] = {
+        self.actions: dict[str, DomainActions] = {
             "cover": CoverActions(self),
             "fan": FanActions(self),
             "light": LightActions(self),
