@@ -29,7 +29,6 @@ class SwitchActions:
     # -------------------------------------------------------------
     def handle_press(self, button: str) -> None:
         match button:
-
             case "on":
                 asyncio.create_task(self._turn_on())
 

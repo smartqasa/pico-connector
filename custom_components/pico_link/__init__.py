@@ -59,7 +59,6 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     # Build controller per device
     # ------------------------------------------------------------
     for idx, device_raw in enumerate(device_list, start=1):
-
         try:
             pico_conf: PicoConfig = parse_pico_config(hass, defaults, device_raw)
         except ValueError as err:

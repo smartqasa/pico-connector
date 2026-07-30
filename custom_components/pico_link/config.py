@@ -3,11 +3,11 @@
 # ================================================================
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List
 
 from homeassistant.helpers import device_registry as dr
-import logging
 
 from .const import VALID_PICO_TYPES  # valid: 3BRL, 4B, P2B, 2B
 
@@ -34,18 +34,18 @@ class PicoConfig:
     step_time_ms: int = 650
 
     # Cover configuration
-    cover_open_pos: int = 100      # 1–100
-    cover_step_pct: int = 10       # 1–25
+    cover_open_pos: int = 100  # 1–100
+    cover_step_pct: int = 10  # 1–25
     cover_inverted: bool = False
 
     # Fan configuration
-    fan_on_pct: int = 100          # 1–100
+    fan_on_pct: int = 100  # 1–100
 
     # Light configuration
-    light_on_pct: int = 100        # 1–100
-    light_low_pct: int = 5         # 1–99
-    light_step_pct: int = 10       # 1–25
-    light_transition_on: int = 0   # 0-300
+    light_on_pct: int = 100  # 1–100
+    light_low_pct: int = 5  # 1–99
+    light_step_pct: int = 10  # 1–25
+    light_transition_on: int = 0  # 0-300
     light_transition_off: int = 0  # 0-300
 
     # Media player config
@@ -209,9 +209,7 @@ def parse_pico_config(
 
         device_id = lookup_device_id(hass, name)
         if not device_id:
-            raise ValueError(
-                f"No device found in registry with name '{name}'."
-            )
+            raise ValueError(f"No device found in registry with name '{name}'.")
 
         _LOGGER.debug("Resolved device name '%s' → device_id %s", name, device_id)
 
@@ -330,30 +328,23 @@ def parse_pico_config(
     conf = PicoConfig(
         device_id=device_id,
         type=device_type,
-
         covers=covers,
         fans=fans,
         lights=lights,
         media_players=media_players,
         switches=switches,
-
         hold_time_ms=hold_time_ms,
         step_time_ms=step_time_ms,
-
         cover_open_pos=cover_open_pos,
         cover_step_pct=cover_step_pct,
         cover_inverted=cover_inverted,
-
         fan_on_pct=fan_on_pct,
-
         light_on_pct=light_on_pct,
         light_low_pct=light_low_pct,
         light_step_pct=light_step_pct,
         light_transition_on=light_transition_on,
         light_transition_off=light_transition_off,
-
         media_player_vol_step=media_player_vol_step,
-
         middle_button=middle_button,
         buttons=merged.get("buttons", {}),
     )

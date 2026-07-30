@@ -1,6 +1,7 @@
 # profiles/profile_base.py
 from __future__ import annotations
-from typing import Protocol, TYPE_CHECKING
+
+from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from ..controller import PicoController
@@ -14,11 +15,8 @@ class PicoProfile(Protocol):
     - handle_release()
     """
 
-    def __init__(self, controller: "PicoController") -> None:
-        ...
+    def __init__(self, controller: "PicoController") -> None: ...
 
-    def handle_press(self, button: str) -> None:
-        ...
+    def handle_press(self, button: str) -> None: ...
 
-    def handle_release(self, button: str) -> None:
-        ...
+    def handle_release(self, button: str) -> None: ...

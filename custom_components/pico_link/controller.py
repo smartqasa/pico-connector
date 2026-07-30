@@ -5,23 +5,23 @@ from typing import Any, Dict, Mapping, Optional, Tuple
 
 from homeassistant.core import Event, HomeAssistant, callback
 
-from .config import PicoConfig
-from .const import SUPPORTED_BUTTONS, PICO_EVENT_TYPE, PICO_TYPE_MAP
-from .utilities import SharedUtils
-
-# Profiles
-from .profiles.base import PicoProfile
-from .profiles.pico_3brl import Pico3ButtonRaiseLower
-from .profiles.pico_p2b import PaddleSwitchPico
-from .profiles.pico_2b import Pico2Button
-from .profiles.pico_4b import Pico4ButtonScene
+from .actions.cover_actions import CoverActions
+from .actions.fan_actions import FanActions
 
 # Action modules
 from .actions.light_actions import LightActions
-from .actions.cover_actions import CoverActions
-from .actions.fan_actions import FanActions
-from .actions.switch_actions import SwitchActions
 from .actions.media_player_actions import MediaPlayerActions
+from .actions.switch_actions import SwitchActions
+from .config import PicoConfig
+from .const import PICO_EVENT_TYPE, PICO_TYPE_MAP, SUPPORTED_BUTTONS
+
+# Profiles
+from .profiles.base import PicoProfile
+from .profiles.pico_2b import Pico2Button
+from .profiles.pico_3brl import Pico3ButtonRaiseLower
+from .profiles.pico_4b import Pico4ButtonScene
+from .profiles.pico_p2b import PaddleSwitchPico
+from .utilities import SharedUtils
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -56,11 +56,11 @@ class PicoController:
 
         # Domain-level behaviors
         self.actions: Dict[str, Any] = {
-            "cover":        CoverActions(self),
-            "fan":          FanActions(self),
-            "light":        LightActions(self),
+            "cover": CoverActions(self),
+            "fan": FanActions(self),
+            "light": LightActions(self),
             "media_player": MediaPlayerActions(self),
-            "switch":       SwitchActions(self),
+            "switch": SwitchActions(self),
         }
 
     @property

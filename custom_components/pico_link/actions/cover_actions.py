@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from ..controller import PicoController
@@ -169,33 +169,19 @@ class CoverActions:
 
         # Fully open
         if open_pos == 100:
-            await self.ctrl.utils.call_service(
-                "open_cover",
-                {},
-                domain="cover"
-            )
+            await self.ctrl.utils.call_service("open_cover", {}, domain="cover")
             return
 
         # Go to set position
         await self.ctrl.utils.call_service(
-            "set_cover_position",
-            {"position": open_pos},
-            domain="cover"
+            "set_cover_position", {"position": open_pos}, domain="cover"
         )
 
     async def _close_full(self):
-        await self.ctrl.utils.call_service(
-            "close_cover",
-            {},
-            domain="cover"
-        )
+        await self.ctrl.utils.call_service("close_cover", {}, domain="cover")
 
     async def _stop(self):
-        await self.ctrl.utils.call_service(
-            "stop_cover",
-            {},
-            domain="cover"
-        )
+        await self.ctrl.utils.call_service("stop_cover", {}, domain="cover")
 
     async def _start_motion(self, direction: str):
         svc = "open_cover" if direction == "raise" else "close_cover"
@@ -215,7 +201,5 @@ class CoverActions:
             new_pos = max(0, pos - step)
 
         await self.ctrl.utils.call_service(
-            "set_cover_position",
-            {"position": new_pos},
-            domain="cover"
+            "set_cover_position", {"position": new_pos}, domain="cover"
         )
