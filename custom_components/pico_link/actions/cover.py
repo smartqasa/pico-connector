@@ -169,12 +169,23 @@ class CoverActions:
         self._pressed["lower"] = True
         self._press_ts["lower"] = time.time()
 
-        asyncio.create_task(self._step("lower"))
-        asyncio.create_task(self._hold_lifecycle("lower"))
+        self.ctrl.create_task(
+            self._step("lower"),
+            "cover-lower-step",
+        )
+
+        self.ctrl.create_task(
+            self._hold_lifecycle("lower"),
+            "cover-lower-hold",
+        )
 
     def release_lower(self):
         self._pressed["lower"] = False
-        asyncio.create_task(self._stop())
+
+        self.ctrl.create_task(
+            self._stop(),
+            "cover-stop",
+        )
 
     # -------------------------------------------------------------
     # HOLD LOGIC FOR RAISE/LOWER
