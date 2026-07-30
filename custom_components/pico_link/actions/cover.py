@@ -75,14 +75,23 @@ class CoverActions:
     def press_on(self):
         # STOP if moving
         if self._is_moving():
-            asyncio.create_task(self._stop())
+            self.ctrl.create_task(
+                self._stop(),
+                "cover-stop",
+            )
             return
 
         if self.ctrl.conf.cover_inverted:
-            asyncio.create_task(self._close_full())
+            self.ctrl.create_task(
+                self._close_full(),
+                "cover-close",
+            )
             return
 
-        asyncio.create_task(self._open_to_position())
+        self.ctrl.create_task(
+            self._open_to_position(),
+            "cover-open",
+        )
 
     def release_on(self):
         pass  # tap-only
@@ -91,29 +100,42 @@ class CoverActions:
     def press_off(self):
         # STOP if moving
         if self._is_moving():
-            asyncio.create_task(self._stop())
+            self.ctrl.create_task(
+                self._stop(),
+                "cover-stop",
+            )
             return
 
         if self.ctrl.conf.cover_inverted:
-            asyncio.create_task(self._open_to_position())
+            self.ctrl.create_task(
+                self._open_to_position(),
+                "cover-open",
+            )
             return
 
-        asyncio.create_task(self._close_full())
+        self.ctrl.create_task(
+            self._close_full(),
+            "cover-close",
+        )
 
     def release_off(self):
         pass
 
     # ----------------------- STOP ----------------------
     def press_stop(self):
-        """STOP button: run middle_button OR default stop."""
         actions = self.ctrl.conf.middle_button
 
         if actions:
-            for action in actions:
-                asyncio.create_task(self.ctrl.utils.execute_button_action(action))
+            self.ctrl.create_task(
+                self.ctrl.utils.execute_button_action(actions),
+                "cover-middle-button",
+            )
             return
 
-        asyncio.create_task(self._stop())
+        self.ctrl.create_task(
+            self._stop(),
+            "cover-stop",
+        )
 
     def release_stop(self):
         pass
@@ -124,15 +146,22 @@ class CoverActions:
         self._pressed["raise"] = True
         self._press_ts["raise"] = time.time()
 
-        # TAP step immediately
-        asyncio.create_task(self._step("raise"))
+        self.ctrl.create_task(
+            self._step("raise"),
+            "cover-raise-step",
+        )
 
-        # HOLD lifecycle
-        asyncio.create_task(self._hold_lifecycle("raise"))
+        self.ctrl.create_task(
+            self._hold_lifecycle("raise"),
+            "cover-raise-hold",
+        )
 
     def release_raise(self):
         self._pressed["raise"] = False
-        asyncio.create_task(self._stop())
+        self.ctrl.create_task(
+            self._stop(),
+            "cover-stop",
+        )
 
     # ----------------------- LOWER ---------------------
     def press_lower(self):

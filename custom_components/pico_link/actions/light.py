@@ -133,7 +133,10 @@ class LightActions:
         if self._supports_onoff_hold():
             self._start_onoff_hold(button="on", direction=1)
         else:
-            asyncio.create_task(self._turn_on())
+            self.ctrl.create_task(
+                self._turn_on(),
+                "light-turn-on",
+            )
 
     def release_on(self):
         if self._supports_onoff_hold():
@@ -157,7 +160,10 @@ class LightActions:
         if self._supports_onoff_hold():
             self._start_onoff_hold(button="off", direction=-1)
         else:
-            asyncio.create_task(self._turn_off())
+            self.ctrl.create_task(
+                self._turn_off(),
+                "light-turn-off",
+            )
 
     def release_off(self):
         if self._supports_onoff_hold():
@@ -176,8 +182,10 @@ class LightActions:
             _LOGGER.debug("Light STOP pressed: no middle_button actions configured")
             return
 
-        for action in actions:
-            asyncio.create_task(self.ctrl.utils.execute_button_action(action))
+        self.ctrl.create_task(
+            self.ctrl.utils.execute_button_action(actions),
+            "light-middle-button",
+        )
 
     def release_stop(self):
         pass
@@ -223,11 +231,15 @@ class LightActions:
         self._is_holding[button] = False
         self._press_ts[button] = time.time()
 
-        # TAP step immediately
-        asyncio.create_task(self._step_brightness(direction))
+        self.ctrl.create_task(
+            self._step_brightness(direction),
+            f"light-{button}-step",
+        )
 
-        # HOLD → ramp
-        task = asyncio.create_task(self._hold_lifecycle(button, direction))
+        task = self.ctrl.create_task(
+            self._hold_lifecycle(button, direction),
+            f"light-{button}-hold",
+        )
         self._tasks[button] = task
 
     def _stop_raise_lower(self, button: str):
@@ -255,7 +267,10 @@ class LightActions:
         self._is_holding[button] = False
         self._press_ts[button] = time.time()
 
-        task = asyncio.create_task(self._onoff_hold_lifecycle(button, direction))
+        task = self.ctrl.create_task(
+            self._onoff_hold_lifecycle(button, direction),
+            f"light-{button}-hold",
+        )
         self._tasks[button] = task
 
     async def _onoff_hold_lifecycle(self, button: str, direction: int):
@@ -292,7 +307,10 @@ class LightActions:
         if not self._is_holding.get(button, False):
             # TAP: authoritative stop gesture
             self._abort_motion()
-            asyncio.create_task(tap_action())
+            self.ctrl.create_task(
+                tap_action(),
+                f"light-{button}-tap",
+            )
 
         # Reset state for this button
         self._tasks[button] = None

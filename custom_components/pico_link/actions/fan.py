@@ -1,7 +1,6 @@
 # fan_actions.py
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING, List, Optional
 
@@ -34,43 +33,55 @@ class FanActions:
     # ==============================================================
 
     def press_on(self):
-        asyncio.create_task(self._turn_on())
+        self.ctrl.create_task(
+            self._turn_on(),
+            "fan-turn-on",
+        )
 
     def release_on(self):
         pass
 
     def press_off(self):
-        asyncio.create_task(self._turn_off())
+        self.ctrl.create_task(
+            self._turn_off(),
+            "fan-turn-off",
+        )
 
     def release_off(self):
         pass
 
     def press_stop(self):
-        """
-        STOP behavior:
-        - If user provided middle_button actions → run them.
-        - Otherwise → reverse direction.
-        """
         actions = self.ctrl.conf.middle_button
 
         if actions:
-            for action in actions:
-                asyncio.create_task(self.ctrl.utils.execute_button_action(action))
+            self.ctrl.create_task(
+                self.ctrl.utils.execute_button_action(actions),
+                "fan-middle-button",
+            )
             return
 
-        asyncio.create_task(self._reverse_direction())
+        self.ctrl.create_task(
+            self._reverse_direction(),
+            "fan-reverse-direction",
+        )
 
     def release_stop(self):
         pass
 
     def press_raise(self):
-        asyncio.create_task(self._step(1))
+        self.ctrl.create_task(
+            self._step(1),
+            "fan-step-up",
+        )
 
     def release_raise(self):
         pass
 
     def press_lower(self):
-        asyncio.create_task(self._step(-1))
+        self.ctrl.create_task(
+            self._step(-1),
+            "fan-step-down",
+        )
 
     def release_lower(self):
         pass

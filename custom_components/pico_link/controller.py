@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import logging
-from typing import Any, Mapping, Optional, Tuple
+from collections.abc import Coroutine
+from typing import Any, Mapping, Optional, Tuple, TypeVar
 
 from homeassistant.core import Event, HomeAssistant, callback
 
@@ -13,7 +15,7 @@ from .actions.light import LightActions
 from .actions.media_player import MediaPlayerActions
 from .actions.switch import SwitchActions
 from .config import PicoConfig
-from .const import PICO_EVENT_TYPE, PICO_TYPE_MAP, SUPPORTED_BUTTONS
+from .const import DOMAIN, PICO_EVENT_TYPE, PICO_TYPE_MAP, SUPPORTED_BUTTONS
 
 # Profiles
 from .profiles.base import PicoProfile
@@ -24,6 +26,7 @@ from .profiles.pico_p2b import PaddleSwitchPico
 from .utilities import SharedUtils
 
 _LOGGER = logging.getLogger(__name__)
+_T = TypeVar("_T")
 
 
 BEHAVIOR_CLASSES = {
@@ -36,10 +39,11 @@ BEHAVIOR_CLASSES = {
 
 class PicoController:
     """
-    Clean minimal controller:
-    - No pressed/task state here
-    - Action modules own all state + lifecycles
-    - Controller only selects profile and dispatches events
+    Controller for one configured Pico.
+
+    - Action modules own domain and gesture state
+    - Controller owns all asynchronous task lifecycles
+    - Controller selects the hardware profile and dispatches events
     """
 
     def __init__(self, hass: HomeAssistant, conf: PicoConfig) -> None:
@@ -53,6 +57,8 @@ class PicoController:
         self._behavior: Optional[PicoProfile] = None
         self._behavior_name: Optional[str] = None
         self._unsub_event = None
+        # All asynchronous work created for this Pico.
+        self._tasks: set[asyncio.Future[Any]] = set()
 
         # Domain-level behaviors
         self.actions: dict[str, DomainActions] = {
@@ -66,6 +72,48 @@ class PicoController:
     @property
     def behavior_name(self) -> Optional[str]:
         return self._behavior_name
+
+    @callback
+    def create_task(
+        self,
+        target: Coroutine[Any, Any, _T],
+        name: str,
+    ) -> asyncio.Task[_T]:
+        """
+        Create and track asynchronous work for this Pico.
+
+        Home Assistant owns the task at the application level. The
+        controller additionally owns it at the Pico lifecycle level.
+        """
+        task = self.hass.async_create_task(target)
+
+        # Do not pass name= to async_create_task because Pico Link
+        # currently supports Home Assistant 2023.1.
+        task.set_name(f"{DOMAIN}:{self.conf.device_id}:{name}")
+
+        self._tasks.add(task)
+        task.add_done_callback(self._handle_task_done)
+
+        return task
+
+    @callback
+    def _handle_task_done(self, task: asyncio.Future[Any]) -> None:
+        """Remove a completed task and report unexpected failures."""
+        self._tasks.discard(task)
+
+        if task.cancelled():
+            return
+
+        try:
+            task.result()
+        except Exception:
+            task_name = task.get_name() if isinstance(task, asyncio.Task) else "unnamed"
+
+            _LOGGER.exception(
+                "Device %s: task '%s' failed",
+                self.conf.device_id,
+                task_name,
+            )
 
     # ---------------------------------------------------------
     # Start (subscribe to Pico events)
@@ -176,16 +224,36 @@ class PicoController:
     # ---------------------------------------------------------
     # Stop (unsubscribe + reset action modules)
     # ---------------------------------------------------------
-    def async_stop(self):
-        # Reset all action modules (cancel tasks, clear state)
-        for mod in self.actions.values():
-            reset = getattr(mod, "reset_state", None)
+    async def async_stop(self) -> None:
+        """Unsubscribe, cancel all Pico work, and await task completion."""
+
+        # Prevent any new Pico events before cancelling current work.
+        if self._unsub_event is not None:
+            self._unsub_event()
+            self._unsub_event = None
+
+        # Let action modules clear their domain-specific gesture state.
+        # Light and media-player modules also cancel their local hold tasks.
+        for action_handler in self.actions.values():
+            reset = getattr(action_handler, "reset_state", None)
+
             if callable(reset):
                 reset()
 
-        if self._unsub_event:
-            self._unsub_event()
-            self._unsub_event = None
+        # Make a stable copy because task completion callbacks mutate
+        # self._tasks as each cancellation completes.
+        tasks = tuple(self._tasks)
+
+        for task in tasks:
+            task.cancel()
+
+        if tasks:
+            await asyncio.gather(
+                *tasks,
+                return_exceptions=True,
+            )
+
+        self._tasks.clear()
 
     # ---------------------------------------------------------
     # Convert raw Lutron event into normalized button + action

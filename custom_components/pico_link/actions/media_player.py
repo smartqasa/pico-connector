@@ -49,32 +49,38 @@ class MediaPlayerActions:
 
     # --- ON --------------------------------------------------------
     def press_on(self):
-        asyncio.create_task(self._play_pause())
+        self.ctrl.create_task(
+            self._play_pause(),
+            "media-play-pause",
+        )
 
     def release_on(self):
         pass  # tap-only
 
     # --- OFF -------------------------------------------------------
     def press_off(self):
-        asyncio.create_task(self._next_track())
+        self.ctrl.create_task(
+            self._next_track(),
+            "media-next-track",
+        )
 
     def release_off(self):
         pass  # tap-only
 
     # --- STOP ------------------------------------------------------
     def press_stop(self):
-        """
-        STOP:
-        - execute middle_button actions if defined
-        - else mute/unmute toggle
-        """
         actions = self.ctrl.conf.middle_button
 
         if actions:
-            for action in actions:
-                asyncio.create_task(self.ctrl.utils.execute_button_action(action))
+            self.ctrl.create_task(
+                self.ctrl.utils.execute_button_action(actions),
+                "media-middle-button",
+            )
         else:
-            asyncio.create_task(self._toggle_mute())
+            self.ctrl.create_task(
+                self._toggle_mute(),
+                "media-toggle-mute",
+            )
 
     def release_stop(self):
         pass
@@ -101,11 +107,15 @@ class MediaPlayerActions:
         self._pressed[button] = True
         self._press_ts[button] = time.time()
 
-        # TAP → immediate step
-        asyncio.create_task(self._step_volume(direction))
+        self.ctrl.create_task(
+            self._step_volume(direction),
+            f"media-{button}-step",
+        )
 
-        # HOLD → ramp
-        task = asyncio.create_task(self._hold_lifecycle(button, direction))
+        task = self.ctrl.create_task(
+            self._hold_lifecycle(button, direction),
+            f"media-{button}-hold",
+        )
         self._tasks[button] = task
 
     def _stop_raise_lower(self, button: str):

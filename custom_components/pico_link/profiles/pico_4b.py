@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING
 
@@ -56,8 +55,10 @@ class Pico4ButtonScene:
             return
 
         # Execute each action individually
-        for action in actions:
-            asyncio.create_task(self._ctrl.utils.execute_button_action(action))
+        self._ctrl.create_task(
+            self._ctrl.utils.execute_button_action(actions),
+            f"4b-{button}",
+        )
 
     # -------------------------------------------------------------
     # RELEASE

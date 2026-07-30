@@ -1,7 +1,6 @@
 # switch_actions.py
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING
 
@@ -31,7 +30,10 @@ class SwitchActions:
     # ==============================================================
 
     def press_on(self) -> None:
-        asyncio.create_task(self._turn_on())
+        self.ctrl.create_task(
+            self._turn_on(),
+            "switch-turn-on",
+        )
 
     def release_on(self) -> None:
         pass
@@ -41,7 +43,10 @@ class SwitchActions:
     # ==============================================================
 
     def press_off(self) -> None:
-        asyncio.create_task(self._turn_off())
+        self.ctrl.create_task(
+            self._turn_off(),
+            "switch-turn-off",
+        )
 
     def release_off(self) -> None:
         pass
@@ -62,8 +67,10 @@ class SwitchActions:
             _LOGGER.debug("Switch STOP pressed: no middle_button actions configured")
             return
 
-        for action in actions:
-            asyncio.create_task(self.ctrl.utils.execute_button_action(action))
+        self.ctrl.create_task(
+            self.ctrl.utils.execute_button_action(actions),
+            "switch-middle-button",
+        )
 
     def release_stop(self) -> None:
         pass

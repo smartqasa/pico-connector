@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, List
 
@@ -91,8 +92,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     # Cleanup on shutdown
     # ------------------------------------------------------------
     async def _async_stop(_: Any) -> None:
-        for ctl in controllers:
-            ctl.async_stop()
+        await asyncio.gather(*(controller.async_stop() for controller in controllers))
 
     hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _async_stop)
 
