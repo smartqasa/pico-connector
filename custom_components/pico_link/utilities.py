@@ -144,7 +144,7 @@ class SharedUtils:
                 domain,
                 service,
                 data,
-                blocking=False,
+                blocking=True,
                 target=target,
             )
         except Exception as err:

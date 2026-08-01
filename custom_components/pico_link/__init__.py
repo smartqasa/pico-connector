@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, List
+from typing import Any
 
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import HomeAssistant
@@ -17,88 +17,135 @@ from .controller import PicoController
 _LOGGER = logging.getLogger(__name__)
 
 
-async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+async def async_setup(
+    hass: HomeAssistant,
+    config: ConfigType,
+) -> bool:
+    """Set up Pico Link from configuration.yaml."""
     root = config.get(DOMAIN)
-    if not root:
-        _LOGGER.debug("No %s configuration found in configuration.yaml", DOMAIN)
+
+    if root is None:
+        _LOGGER.debug(
+            "No %s configuration found in configuration.yaml",
+            DOMAIN,
+        )
         return True
 
     if not isinstance(root, dict):
         _LOGGER.error(
-            "Invalid pico_link config: expected mapping with optional 'defaults' "
-            "and required 'devices'"
+            "Invalid %s configuration: expected a mapping with optional "
+            "'defaults' and required 'devices', got %s",
+            DOMAIN,
+            type(root).__name__,
         )
         return False
 
-    # ------------------------------------------------------------
-    # Validate optional defaults block
-    # ------------------------------------------------------------
-    defaults = root.get("defaults", {}) or {}
+    # =============================================================
+    # DEFAULTS
+    # =============================================================
 
-    if not isinstance(defaults, dict):
+    raw_defaults = root.get("defaults")
+
+    if raw_defaults is None:
+        defaults: dict[str, Any] = {}
+    elif isinstance(raw_defaults, dict):
+        defaults = raw_defaults
+    else:
         _LOGGER.error(
-            "Invalid 'defaults' block in pico_link configuration: expected a mapping, got %s. "
-            "Example:\n"
-            "pico_link:\n"
-            "  defaults:\n"
-            "    hold_time_ms: 300",
-            type(defaults).__name__,
+            "Invalid '%s.defaults' configuration: expected a mapping, got %s",
+            DOMAIN,
+            type(raw_defaults).__name__,
         )
         return False
 
-    # ------------------------------------------------------------
-    # Required list of devices
-    # ------------------------------------------------------------
+    # =============================================================
+    # DEVICES
+    # =============================================================
+
     device_list = root.get("devices")
+
     if not isinstance(device_list, list):
-        _LOGGER.error("pico_link.devices must be a list")
+        _LOGGER.error(
+            "Invalid '%s.devices' configuration: expected a list, got %s",
+            DOMAIN,
+            type(device_list).__name__,
+        )
         return False
 
-    controllers: List[PicoController] = []
+    controllers: list[PicoController] = []
 
-    # ------------------------------------------------------------
-    # Build controller per device
-    # ------------------------------------------------------------
-    for idx, device_raw in enumerate(device_list, start=1):
-        try:
-            pico_conf: PicoConfig = parse_pico_config(hass, defaults, device_raw)
-        except ValueError as err:
+    for index, device_raw in enumerate(device_list, start=1):
+        # A YAML entry such as null, a string, or a nested list does
+        # not provide the mapping interface required by the parser.
+        if not isinstance(device_raw, dict):
             _LOGGER.error(
-                "Invalid pico_link config at entry %s (device_id=%s, type=%s): %s",
-                idx,
-                device_raw.get("device_id") or device_raw.get("name"),
-                device_raw.get("type"),
+                "Invalid %s device entry %s: expected a mapping, got %s: %r",
+                DOMAIN,
+                index,
+                type(device_raw).__name__,
+                device_raw,
+            )
+            continue
+
+        try:
+            pico_config: PicoConfig = parse_pico_config(
+                hass,
+                defaults,
+                device_raw,
+            )
+        except ValueError as err:
+            device_identifier = (
+                device_raw.get("device_id") or device_raw.get("name") or "<unknown>"
+            )
+            device_type = device_raw.get("type") or "<unknown>"
+
+            _LOGGER.error(
+                "Invalid %s device entry %s (device=%s, type=%s): %s",
+                DOMAIN,
+                index,
+                device_identifier,
+                device_type,
                 err,
             )
             continue
 
-        controller = PicoController(hass, pico_conf)
+        controller = PicoController(
+            hass,
+            pico_config,
+        )
+
         await controller.async_start()
         controllers.append(controller)
 
-    # ------------------------------------------------------------
-    # No controllers created?
-    # ------------------------------------------------------------
+    # =============================================================
+    # COMPLETED SETUP
+    # =============================================================
+
     if not controllers:
         _LOGGER.warning(
-            "%s configured but no valid devices were created; nothing to do",
+            "%s is configured, but no valid Pico devices were created",
             DOMAIN,
         )
         return True
 
     hass.data.setdefault(DOMAIN, {})["controllers"] = controllers
 
-    # ------------------------------------------------------------
-    # Cleanup on shutdown
-    # ------------------------------------------------------------
+    # =============================================================
+    # SHUTDOWN
+    # =============================================================
+
     async def _async_stop(_: Any) -> None:
         await asyncio.gather(*(controller.async_stop() for controller in controllers))
 
-    hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _async_stop)
+    hass.bus.async_listen_once(
+        EVENT_HOMEASSISTANT_STOP,
+        _async_stop,
+    )
 
     _LOGGER.info(
-        "pico_link initialized with %s controller(s)",
+        "%s initialized with %s controller(s)",
+        DOMAIN,
         len(controllers),
-    )  # <<< NEW
+    )
 
     return True

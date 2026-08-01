@@ -144,8 +144,7 @@ def _normalize_int(raw_val, default: int, min_val: int, max_val: int) -> int:
     return max(min_val, min(max_val, val))
 
 
-def _normalize_bool(raw_val, default: bool = False) -> bool:
-    """Normalize common YAML/string bool values."""
+def _normalize_bool(raw_val: Any, default: bool = False) -> bool:
     if raw_val is None:
         return default
 
@@ -154,12 +153,14 @@ def _normalize_bool(raw_val, default: bool = False) -> bool:
 
     if isinstance(raw_val, str):
         value = raw_val.strip().lower()
-        if value in ("true", "yes", "on", "1"):
+
+        if value in {"true", "yes", "on", "1"}:
             return True
-        if value in ("false", "no", "off", "0"):
+
+        if value in {"false", "no", "off", "0"}:
             return False
 
-    return bool(raw_val)
+    raise ValueError(f"Expected a Boolean value, got {raw_val!r}")
 
 
 def _normalize_list(value):
