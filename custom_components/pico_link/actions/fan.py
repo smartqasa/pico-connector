@@ -1,56 +1,52 @@
 # fan_actions.py
 from __future__ import annotations
 
-import logging
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from ..controller import PicoController
 
-_LOGGER = logging.getLogger(__name__)
-
 
 class FanActions:
     """
-    Tap-only fan controller.
+    Tap-only fan controller for all supported Pico profiles.
 
     Behaviors:
-      ON tap     → turn on to fan_on_pct (default 100)
-      OFF tap    → turn off
-      RAISE tap  → next higher speed
-      LOWER tap  → next lower speed
-      STOP tap   → reverse direction (or middle_button override)
+        ON tap     -> turn on to fan_on_pct
+        OFF tap    -> turn off
+        RAISE tap  -> move to the next higher speed
+        LOWER tap  -> move to the next lower speed
+        STOP tap   -> reverse direction or execute middle_button actions
 
-    Additional behavior:
-      - If fan is OFF and RAISE is tapped → go to the first speed step
+    If the fan is off, RAISE moves it to the first available speed.
     """
 
     def __init__(self, ctrl: "PicoController") -> None:
         self.ctrl = ctrl
 
-    # ==============================================================
-    # PUBLIC ENTRY POINTS (called by profiles)
-    # ==============================================================
+    # =============================================================
+    # PROFILE ENTRY POINTS
+    # =============================================================
 
-    def press_on(self):
+    def press_on(self) -> None:
         self.ctrl.create_task(
             self._turn_on(),
             "fan-turn-on",
         )
 
-    def release_on(self):
+    def release_on(self) -> None:
         pass
 
-    def press_off(self):
+    def press_off(self) -> None:
         self.ctrl.create_task(
             self._turn_off(),
             "fan-turn-off",
         )
 
-    def release_off(self):
+    def release_off(self) -> None:
         pass
 
-    def press_stop(self):
+    def press_stop(self) -> None:
         actions = self.ctrl.conf.middle_button
 
         if actions:
@@ -65,147 +61,183 @@ class FanActions:
             "fan-reverse-direction",
         )
 
-    def release_stop(self):
+    def release_stop(self) -> None:
         pass
 
-    def press_raise(self):
+    def press_raise(self) -> None:
         self.ctrl.create_task(
             self._step(1),
             "fan-step-up",
         )
 
-    def release_raise(self):
+    def release_raise(self) -> None:
         pass
 
-    def press_lower(self):
+    def press_lower(self) -> None:
         self.ctrl.create_task(
             self._step(-1),
             "fan-step-down",
         )
 
-    def release_lower(self):
+    def release_lower(self) -> None:
         pass
 
-    # ==============================================================
+    # =============================================================
     # FAN OPERATIONS
-    # ==============================================================
+    # =============================================================
 
-    async def _turn_on(self):
-        pct = self.ctrl.conf.fan_on_pct
-
+    async def _turn_on(self) -> None:
         await self.ctrl.utils.call_service(
             "set_percentage",
-            {"percentage": pct},
+            {"percentage": self.ctrl.conf.fan_on_pct},
             domain="fan",
         )
 
-    async def _turn_off(self):
+    async def _turn_off(self) -> None:
         await self.ctrl.utils.call_service(
             "turn_off",
             {},
             domain="fan",
         )
 
-    async def _reverse_direction(self):
+    async def _reverse_direction(self) -> None:
         state = self.ctrl.utils.get_entity_state()
+
         if not state:
             return
 
-        cur = state.attributes.get("direction")
-        if cur not in ("forward", "reverse"):
+        current_direction = state.attributes.get("direction")
+
+        if current_direction not in ("forward", "reverse"):
             return
 
-        new_dir = "reverse" if cur == "forward" else "forward"
+        new_direction = "reverse" if current_direction == "forward" else "forward"
 
         await self.ctrl.utils.call_service(
             "set_direction",
-            {"direction": new_dir},
+            {"direction": new_direction},
             domain="fan",
         )
 
-    # ==============================================================
+    # =============================================================
     # DISCRETE SPEED STEPPING
-    # ==============================================================
+    # =============================================================
 
-    async def _step(self, direction: int):
+    async def _step(self, direction: int) -> None:
         """
-        Step fan speed up/down based on discrete ladder.
-        If fan is OFF and stepping upward → go to first step.
-        """
+        Move the fan one step up or down its discrete speed ladder.
 
-        ladder = self._get_speed_ladder()
-        if not ladder:
+        If the fan is off, stepping upward selects the first nonzero
+        speed.
+        """
+        speed_ladder = self._get_speed_ladder()
+
+        if not speed_ladder:
             return
 
-        current = self._get_current_pct()
-        if current is None:
+        current_percentage = self._get_current_percentage()
+
+        if current_percentage is None:
             return
 
-        # If fan is off → treat as step from 0 → first step
-        if current == 0 and direction > 0:
-            new_pct = ladder[1]  # ladder[0] == 0, so first real step is index 1
+        if current_percentage == 0 and direction > 0:
+            # The ladder always contains at least [0, 100].
+            new_percentage = speed_ladder[1]
         else:
-            # Find closest index in ladder
-            idx = min(range(len(ladder)), key=lambda i: abs(ladder[i] - current))
-            new_idx = max(0, min(len(ladder) - 1, idx + direction))
-            new_pct = ladder[new_idx]
+            current_index = min(
+                range(len(speed_ladder)),
+                key=lambda index: abs(speed_ladder[index] - current_percentage),
+            )
+
+            new_index = max(
+                0,
+                min(
+                    len(speed_ladder) - 1,
+                    current_index + direction,
+                ),
+            )
+
+            new_percentage = speed_ladder[new_index]
+
+        # Avoid redundant calls at the top or bottom of the ladder.
+        if new_percentage == current_percentage:
+            return
 
         await self.ctrl.utils.call_service(
             "set_percentage",
-            {"percentage": new_pct},
+            {"percentage": new_percentage},
             domain="fan",
         )
 
-    # ==============================================================
-    # HELPERS
-    # ==============================================================
+    # =============================================================
+    # SPEED HELPERS
+    # =============================================================
 
-    def _get_speed_ladder(self) -> List[int]:
+    def _get_speed_ladder(self) -> list[int]:
         """
-        Builds the ladder using HA's internal percentage_step.
+        Build a discrete speed ladder from percentage_step.
 
-        Example:
-            percentage_step=25 → [0,25,50,75,100]
-            percentage_step=33 → [0,33,66,99]
+        Examples:
+            percentage_step=25 -> [0, 25, 50, 75, 100]
+            percentage_step=33 -> [0, 33, 66, 99, 100]
         """
         state = self.ctrl.utils.get_entity_state()
+
         if not state:
             return []
 
-        step = state.attributes.get("percentage_step")
-        if not isinstance(step, (int, float)) or step <= 0:
-            # Fallback → assume 100%
+        raw_step = state.attributes.get("percentage_step")
+
+        if (
+            isinstance(raw_step, bool)
+            or not isinstance(raw_step, (int, float))
+            or raw_step <= 0
+        ):
             return [0, 100]
 
-        ladder = [0]
-        pct = step
+        speed_ladder = [0]
+        percentage = float(raw_step)
 
-        # Build until >= 100
-        while pct < 100:
-            ladder.append(int(pct))
-            pct += step
+        while percentage < 100:
+            value = int(percentage)
 
-        ladder.append(100)
+            if value > 0 and value != speed_ladder[-1]:
+                speed_ladder.append(value)
 
-        return ladder
+            percentage += raw_step
 
-    def _get_current_pct(self) -> Optional[int]:
-        """
-        Returns current fan percentage as an integer.
-        If OFF → returns 0.
-        """
+        if speed_ladder[-1] != 100:
+            speed_ladder.append(100)
+
+        return speed_ladder
+
+    def _get_current_percentage(self) -> Optional[int]:
+        """Return the current fan percentage, treating OFF as zero."""
         state = self.ctrl.utils.get_entity_state()
+
         if not state:
             return None
 
         if state.state == "off":
             return 0
 
-        pct = state.attributes.get("percentage")
-        if pct is None:
+        raw_percentage = state.attributes.get("percentage")
+
+        if raw_percentage is None:
+            return 0
+
+        if isinstance(raw_percentage, bool) or not isinstance(
+            raw_percentage,
+            (int, float, str),
+        ):
             return 0
 
         try:
-            return int(pct)
-        except Exception:
+            percentage = int(float(raw_percentage))
+        except ValueError:
             return 0
+
+        return max(
+            0,
+            min(100, percentage),
+        )
