@@ -10,24 +10,24 @@ if TYPE_CHECKING:
 
 class CoverActions:
     """
-    Unified cover behavior for all supported Pico profiles.
+    Cover behavior for all supported Pico profiles.
 
     P2B / 2B:
-        ON tap  → open to cover_open_pos
-        OFF tap → close fully
-        ON/OFF tap while moving → stop
+        ON tap   -> open to cover_open_pos
+        ON hold  -> move continuously in the ON direction
+        OFF tap  -> close fully
+        OFF hold -> move continuously in the OFF direction
+        ON/OFF while moving -> stop
 
-        If cover_inverted is true:
-            ON tap  → close fully
-            OFF tap → open to cover_open_pos
+        If cover_inverted is true, the ON and OFF directions are reversed.
 
     3BRL:
-        ON tap      → open to cover_open_pos
-        OFF tap     → close fully
-        RAISE tap   → step open
-        RAISE hold  → open continuously until release
-        LOWER tap   → step close
-        LOWER hold  → close continuously until release
+        ON tap      -> open to cover_open_pos
+        OFF tap     -> close fully
+        RAISE tap   -> step open
+        RAISE hold  -> open continuously until release
+        LOWER tap   -> step close
+        LOWER hold  -> close continuously until release
 
     STOP:
         Configured middle_button actions override the default stop action.
@@ -36,24 +36,31 @@ class CoverActions:
     def __init__(self, ctrl: "PicoController") -> None:
         self.ctrl = ctrl
 
-        # Only one raise/lower gesture may be active at a time.
+        # Only one ON/OFF/RAISE/LOWER gesture may be active at a time.
         self._active_button: Optional[str] = None
-
-        # True after the hold threshold has elapsed and continuous
-        # open/close movement has started.
         self._is_holding = False
 
-        # Retain the position-step task so a newer command can cancel
-        # a step that has not yet been submitted to Home Assistant.
-        self._step_task: Optional[asyncio.Task] = None
+        # Retain gesture tasks so releases and newer commands can cancel them.
+        self._step_task: Optional[asyncio.Task[Any]] = None
+        self._hold_task: Optional[asyncio.Task[Any]] = None
 
-        # Retain the delayed hold task so release or a newer command
-        # can cancel it before continuous movement starts.
-        self._hold_task: Optional[asyncio.Task] = None
-
-        # Each new gesture receives a generation number. Delayed tasks
-        # must still match the current generation before they may act.
+        # Invalidates delayed tasks belonging to older gestures.
         self._gesture_generation = 0
+
+    # =============================================================
+    # PROFILE HELPERS
+    # =============================================================
+
+    def _supports_onoff_hold(self) -> bool:
+        """Return True when ON/OFF must distinguish taps from holds."""
+        return self.ctrl.conf.type in ("P2B", "2B")
+
+    def _onoff_motion_direction(self, button: str) -> str:
+        """Return the movement direction for an ON or OFF hold."""
+        if button == "on":
+            return "lower" if self.ctrl.conf.cover_inverted else "raise"
+
+        return "raise" if self.ctrl.conf.cover_inverted else "lower"
 
     # =============================================================
     # STATE HELPERS
@@ -77,7 +84,10 @@ class CoverActions:
 
         position = state.attributes.get("current_position")
 
-        if isinstance(position, bool) or not isinstance(position, (int, float, str)):
+        if isinstance(position, bool) or not isinstance(
+            position,
+            (int, float, str),
+        ):
             return None
 
         try:
@@ -95,8 +105,8 @@ class CoverActions:
 
         Returns True when continuous movement had already started.
 
-        The position-step task is not canceled on a normal release because
-        a quick tap must still complete its set_cover_position call.
+        The position-step task is not canceled on a normal RAISE/LOWER
+        release because a quick tap must still complete its position command.
         """
         was_holding = self._is_holding
 
@@ -116,6 +126,77 @@ class CoverActions:
 
         return was_holding
 
+    # =============================================================
+    # ON / OFF TAP-HOLD GESTURES
+    # =============================================================
+
+    def _press_onoff(self, button: str) -> None:
+        """Handle an ON or OFF press for every Pico profile."""
+        was_holding = self._clear_gesture_state()
+
+        # A new ON/OFF press while movement is active acts as STOP.
+        if was_holding or self._is_moving():
+            self.ctrl.create_task(
+                self._stop(),
+                "cover-stop",
+            )
+            return
+
+        if not self._supports_onoff_hold():
+            self._start_onoff_tap(button)
+            return
+
+        self._active_button = button
+        generation = self._gesture_generation
+
+        # P2B/2B tap actions are deferred until release so the same
+        # physical button can be interpreted as a hold.
+        self._hold_task = self.ctrl.create_task(
+            self._hold_lifecycle(button, generation),
+            f"cover-{button}-hold",
+        )
+
+    def _release_onoff(self, button: str) -> None:
+        """Complete a P2B/2B ON or OFF gesture."""
+        if not self._supports_onoff_hold():
+            return
+
+        if self._active_button != button:
+            return
+
+        was_holding = self._clear_gesture_state()
+
+        if was_holding:
+            self.ctrl.create_task(
+                self._stop(),
+                "cover-stop",
+            )
+            return
+
+        self._start_onoff_tap(button)
+
+    def _start_onoff_tap(self, button: str) -> None:
+        """Execute the configured tap action for ON or OFF."""
+        should_open = button == "on"
+
+        if self.ctrl.conf.cover_inverted:
+            should_open = not should_open
+
+        if should_open:
+            self.ctrl.create_task(
+                self._open_to_position(),
+                "cover-open",
+            )
+        else:
+            self.ctrl.create_task(
+                self._close_full(),
+                "cover-close",
+            )
+
+    # =============================================================
+    # RAISE / LOWER GESTURES
+    # =============================================================
+
     def _start_raise_lower(self, button: str) -> None:
         """Perform one position step and arm continuous movement."""
         previous_was_holding = self._clear_gesture_state()
@@ -124,8 +205,8 @@ class CoverActions:
         generation = self._gesture_generation
 
         if previous_was_holding:
-            # Stop the previous continuous direction before issuing the
-            # position step for the new direction.
+            # Stop the previous continuous direction before stepping
+            # in the newly requested direction.
             self._step_task = self.ctrl.create_task(
                 self._stop_then_step(button, generation),
                 f"cover-{button}-transition",
@@ -142,16 +223,13 @@ class CoverActions:
         )
 
     def _release_raise_lower(self, button: str) -> None:
-        """Complete the active raise/lower gesture."""
-        # Ignore a release belonging to a superseded direction.
+        """Complete the active RAISE or LOWER gesture."""
         if self._active_button != button:
             return
 
-        # Do not cancel the position step on a normal tap release.
+        # Allow the immediate position step to finish on a quick tap.
         was_holding = self._clear_gesture_state(cancel_step=False)
 
-        # A tap used set_cover_position and must be allowed to finish.
-        # Only continuous open_cover/close_cover movement needs stopping.
         if was_holding:
             self.ctrl.create_task(
                 self._stop(),
@@ -162,71 +240,17 @@ class CoverActions:
     # PROFILE ENTRY POINTS
     # =============================================================
 
-    # -------------------------------------------------------------
-    # ON
-    # -------------------------------------------------------------
-
     def press_on(self) -> None:
-        was_holding = self._clear_gesture_state()
-
-        # ON during a Pico hold or while the cover reports movement
-        # acts as a stop command.
-        if was_holding or self._is_moving():
-            self.ctrl.create_task(
-                self._stop(),
-                "cover-stop",
-            )
-            return
-
-        if self.ctrl.conf.cover_inverted:
-            self.ctrl.create_task(
-                self._close_full(),
-                "cover-close",
-            )
-            return
-
-        self.ctrl.create_task(
-            self._open_to_position(),
-            "cover-open",
-        )
+        self._press_onoff("on")
 
     def release_on(self) -> None:
-        pass
-
-    # -------------------------------------------------------------
-    # OFF
-    # -------------------------------------------------------------
+        self._release_onoff("on")
 
     def press_off(self) -> None:
-        was_holding = self._clear_gesture_state()
-
-        # OFF during a Pico hold or while the cover reports movement
-        # acts as a stop command.
-        if was_holding or self._is_moving():
-            self.ctrl.create_task(
-                self._stop(),
-                "cover-stop",
-            )
-            return
-
-        if self.ctrl.conf.cover_inverted:
-            self.ctrl.create_task(
-                self._open_to_position(),
-                "cover-open",
-            )
-            return
-
-        self.ctrl.create_task(
-            self._close_full(),
-            "cover-close",
-        )
+        self._press_onoff("off")
 
     def release_off(self) -> None:
-        pass
-
-    # -------------------------------------------------------------
-    # STOP
-    # -------------------------------------------------------------
+        self._release_onoff("off")
 
     def press_stop(self) -> None:
         was_holding = self._clear_gesture_state()
@@ -234,8 +258,6 @@ class CoverActions:
 
         if actions:
             if was_holding:
-                # Stop Pico-initiated continuous cover movement before
-                # executing the configured middle-button actions.
                 self.ctrl.create_task(
                     self._stop_then_execute(actions),
                     "cover-stop-and-middle-button",
@@ -256,20 +278,12 @@ class CoverActions:
     def release_stop(self) -> None:
         pass
 
-    # -------------------------------------------------------------
-    # RAISE
-    # -------------------------------------------------------------
-
     def press_raise(self) -> None:
         """Step open immediately and open continuously when held."""
         self._start_raise_lower("raise")
 
     def release_raise(self) -> None:
         self._release_raise_lower("raise")
-
-    # -------------------------------------------------------------
-    # LOWER
-    # -------------------------------------------------------------
 
     def press_lower(self) -> None:
         """Step closed immediately and close continuously when held."""
@@ -291,13 +305,18 @@ class CoverActions:
         try:
             await asyncio.sleep(self.ctrl.utils._hold_time)
 
-            # The task may belong to an earlier press that was released
-            # or superseded by a newer gesture.
             if generation != self._gesture_generation or self._active_button != button:
                 return
 
             self._is_holding = True
-            await self._start_motion(button)
+
+            direction = (
+                self._onoff_motion_direction(button)
+                if button in ("on", "off")
+                else button
+            )
+
+            await self._start_motion(direction)
 
         except asyncio.CancelledError:
             # Expected when released before the hold threshold.
@@ -311,17 +330,13 @@ class CoverActions:
         """Stop previous continuous movement before stepping."""
         await self._stop()
 
-        # Do not execute the step if another gesture has superseded this one.
         if generation != self._gesture_generation or self._active_button != button:
             return
 
         await self._step(button)
 
-    async def _stop_then_execute(
-        self,
-        actions: Any,
-    ) -> None:
-        """Stop Pico-initiated movement before running custom actions."""
+    async def _stop_then_execute(self, actions: Any) -> None:
+        """Stop Pico movement before running custom middle-button actions."""
         await self._stop()
         await self.ctrl.utils.execute_button_action(actions)
 
@@ -384,7 +399,6 @@ class CoverActions:
         else:
             new_position = max(0, position - step)
 
-        # Avoid sending an unnecessary command at either endpoint.
         if new_position == position:
             return
 

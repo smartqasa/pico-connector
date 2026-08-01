@@ -2,26 +2,35 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Optional
+from collections.abc import Callable, Coroutine
+from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
     from ..controller import PicoController
 
 _LOGGER = logging.getLogger(__name__)
 
+TapAction = Callable[[], Coroutine[Any, Any, None]]
+
 
 class MediaPlayerActions:
     """
-    Media-player behavior for supported Pico profiles.
+    Media-player behavior for all supported Pico profiles.
 
-    Semantics:
-        ON tap     → play/pause
-        OFF tap    → next track
-        RAISE tap  → one volume step up
-        RAISE hold → continuously raise volume
-        LOWER tap  → one volume step down
-        LOWER hold → continuously lower volume
-        STOP tap   → configured middle_button actions or mute/unmute
+    P2B / 2B:
+        ON tap   -> play/pause
+        ON hold  -> continuously raise volume
+        OFF tap  -> next track
+        OFF hold -> continuously lower volume
+
+    3BRL:
+        ON tap      -> play/pause
+        OFF tap     -> next track
+        RAISE tap   -> one volume step up
+        RAISE hold  -> continuously raise volume
+        LOWER tap   -> one volume step down
+        LOWER hold  -> continuously lower volume
+        STOP tap    -> middle_button actions or mute/unmute
     """
 
     MAX_RAMP_STEPS = 50
@@ -29,20 +38,25 @@ class MediaPlayerActions:
     def __init__(self, ctrl: "PicoController") -> None:
         self.ctrl = ctrl
 
-        # Only one raise/lower gesture may be active at a time.
+        # Only one ON/OFF/RAISE/LOWER gesture may be active at a time.
         self._active_button: Optional[str] = None
-
-        # Incremented whenever a gesture starts or is canceled.
-        # Delayed tasks must still match this generation before acting.
+        self._is_holding = False
         self._gesture_generation = 0
 
-        # The most recent volume requested by the active gesture.
-        # This avoids depending on immediate state updates during a ramp.
+        # Track the latest requested volume so ramp calculations do not
+        # depend on immediate Home Assistant state updates.
         self._target_volume: Optional[float] = None
 
-        # Retain both tasks so a new gesture or command can cancel them.
-        self._step_task: Optional[asyncio.Task] = None
-        self._hold_task: Optional[asyncio.Task] = None
+        self._step_task: Optional[asyncio.Task[Any]] = None
+        self._hold_task: Optional[asyncio.Task[Any]] = None
+
+    # =============================================================
+    # PROFILE HELPERS
+    # =============================================================
+
+    def _supports_onoff_hold(self) -> bool:
+        """Return True when ON/OFF must distinguish taps from holds."""
+        return self.ctrl.conf.type in ("P2B", "2B")
 
     # =============================================================
     # GESTURE STATE
@@ -52,15 +66,17 @@ class MediaPlayerActions:
         self,
         *,
         cancel_step: bool = True,
-    ) -> None:
+    ) -> bool:
         """
-        Cancel the active volume gesture.
+        Cancel the current volume gesture.
 
-        The immediate step is not canceled on a normal release because
-        a quick tap must still complete its volume change.
+        Returns True when the hold threshold had already elapsed.
         """
+        was_holding = self._is_holding
+
         self._gesture_generation += 1
         self._active_button = None
+        self._is_holding = False
         self._target_volume = None
 
         if self._hold_task and not self._hold_task.done():
@@ -73,43 +89,40 @@ class MediaPlayerActions:
 
         self._step_task = None
 
-    def _start_raise_lower(
+        return was_holding
+
+    def _start_volume_gesture(
         self,
         button: str,
         direction: int,
+        *,
+        immediate_step: bool,
     ) -> None:
-        """Perform one volume step and arm continuous ramping."""
+        """Start a tap/hold volume gesture."""
         current_volume = self._target_volume
 
         if current_volume is None:
             current_volume = self._get_current_volume()
 
-        # A new directional press supersedes any previous gesture.
         self._clear_volume_gesture()
 
-        if current_volume is None:
-            return
-
-        new_volume = self._calculate_next_volume(
-            current_volume,
-            direction,
-        )
-
-        # Already at the requested endpoint.
-        if new_volume == current_volume:
-            return
-
         self._active_button = button
-        self._target_volume = new_volume
+        self._target_volume = current_volume
         generation = self._gesture_generation
 
-        # Every press performs one immediate step.
-        self._step_task = self.ctrl.create_task(
-            self._set_volume(new_volume),
-            f"media-{button}-step",
-        )
+        if immediate_step and current_volume is not None:
+            new_volume = self._calculate_next_volume(
+                current_volume,
+                direction,
+            )
 
-        # Continuous ramping begins only after the hold threshold.
+            if new_volume != current_volume:
+                self._target_volume = new_volume
+                self._step_task = self.ctrl.create_task(
+                    self._set_volume(new_volume),
+                    f"media-{button}-step",
+                )
+
         self._hold_task = self.ctrl.create_task(
             self._hold_lifecycle(
                 button,
@@ -119,34 +132,47 @@ class MediaPlayerActions:
             f"media-{button}-hold",
         )
 
-    def _release_raise_lower(self, button: str) -> None:
-        """Finish the active volume gesture."""
-        # Ignore releases from a superseded direction.
+    def _release_volume_gesture(
+        self,
+        button: str,
+        *,
+        tap_action: Optional[TapAction] = None,
+    ) -> None:
+        """Finish an ON/OFF/RAISE/LOWER gesture."""
         if self._active_button != button:
             return
 
-        # Allow the immediate tap step to complete while canceling
-        # delayed or active ramp behavior.
+        was_holding = self._is_holding
+
+        # Allow an immediate RAISE/LOWER step to finish on a quick tap.
         self._clear_volume_gesture(cancel_step=False)
+
+        if tap_action is not None and not was_holding:
+            self.ctrl.create_task(
+                tap_action(),
+                f"media-{button}-tap",
+            )
 
     def _gesture_is_current(
         self,
         button: str,
         generation: int,
     ) -> bool:
-        """Return True when a task still belongs to the active gesture."""
         return generation == self._gesture_generation and self._active_button == button
 
     # =============================================================
     # PROFILE ENTRY POINTS
     # =============================================================
 
-    # -------------------------------------------------------------
-    # ON
-    # -------------------------------------------------------------
-
     def press_on(self) -> None:
-        # A direct command supersedes any volume ramp.
+        if self._supports_onoff_hold():
+            self._start_volume_gesture(
+                "on",
+                direction=1,
+                immediate_step=False,
+            )
+            return
+
         self._clear_volume_gesture()
 
         self.ctrl.create_task(
@@ -155,14 +181,21 @@ class MediaPlayerActions:
         )
 
     def release_on(self) -> None:
-        pass
-
-    # -------------------------------------------------------------
-    # OFF
-    # -------------------------------------------------------------
+        if self._supports_onoff_hold():
+            self._release_volume_gesture(
+                "on",
+                tap_action=self._play_pause,
+            )
 
     def press_off(self) -> None:
-        # A direct command supersedes any volume ramp.
+        if self._supports_onoff_hold():
+            self._start_volume_gesture(
+                "off",
+                direction=-1,
+                immediate_step=False,
+            )
+            return
+
         self._clear_volume_gesture()
 
         self.ctrl.create_task(
@@ -171,16 +204,14 @@ class MediaPlayerActions:
         )
 
     def release_off(self) -> None:
-        pass
-
-    # -------------------------------------------------------------
-    # STOP
-    # -------------------------------------------------------------
+        if self._supports_onoff_hold():
+            self._release_volume_gesture(
+                "off",
+                tap_action=self._next_track,
+            )
 
     def press_stop(self) -> None:
-        # A direct command supersedes any volume ramp.
         self._clear_volume_gesture()
-
         actions = self.ctrl.conf.middle_button
 
         if actions:
@@ -198,34 +229,28 @@ class MediaPlayerActions:
     def release_stop(self) -> None:
         pass
 
-    # -------------------------------------------------------------
-    # RAISE
-    # -------------------------------------------------------------
-
     def press_raise(self) -> None:
-        self._start_raise_lower(
+        self._start_volume_gesture(
             "raise",
             direction=1,
+            immediate_step=True,
         )
 
     def release_raise(self) -> None:
-        self._release_raise_lower("raise")
-
-    # -------------------------------------------------------------
-    # LOWER
-    # -------------------------------------------------------------
+        self._release_volume_gesture("raise")
 
     def press_lower(self) -> None:
-        self._start_raise_lower(
+        self._start_volume_gesture(
             "lower",
             direction=-1,
+            immediate_step=True,
         )
 
     def release_lower(self) -> None:
-        self._release_raise_lower("lower")
+        self._release_volume_gesture("lower")
 
     # =============================================================
-    # HOLD AND RAMP LIFECYCLE
+    # HOLD / RAMP LIFECYCLE
     # =============================================================
 
     async def _hold_lifecycle(
@@ -241,6 +266,10 @@ class MediaPlayerActions:
             if not self._gesture_is_current(button, generation):
                 return
 
+            # Crossing the threshold makes ON/OFF a hold even if the
+            # player does not expose a usable volume level.
+            self._is_holding = True
+
             for _ in range(self.MAX_RAMP_STEPS):
                 if not self._gesture_is_current(button, generation):
                     return
@@ -255,14 +284,10 @@ class MediaPlayerActions:
                     direction,
                 )
 
-                # Stop naturally at volume 0.0 or 1.0.
                 if new_volume == current_volume:
                     return
 
                 self._target_volume = new_volume
-
-                if not self._gesture_is_current(button, generation):
-                    return
 
                 await self._set_volume(new_volume)
 
@@ -281,8 +306,7 @@ class MediaPlayerActions:
                 )
 
         except asyncio.CancelledError:
-            # Expected when the button is released or another command
-            # supersedes this gesture.
+            # Expected when the button is released or superseded.
             pass
 
     # =============================================================
@@ -310,16 +334,14 @@ class MediaPlayerActions:
             return
 
         is_muted = state.attributes.get("is_volume_muted")
-        new_value = not bool(is_muted)
 
         await self.ctrl.utils.call_service(
             "volume_mute",
-            {"is_volume_muted": new_value},
+            {"is_volume_muted": not bool(is_muted)},
             domain="media_player",
         )
 
     async def _set_volume(self, volume: float) -> None:
-        """Set media volume using a normalized 0.0–1.0 value."""
         await self.ctrl.utils.call_service(
             "volume_set",
             {"volume_level": volume},
@@ -338,10 +360,16 @@ class MediaPlayerActions:
         """Return the next clamped volume level."""
         step = self.ctrl.conf.media_player_vol_step / 100.0
 
-        new_volume = current_volume + (step * direction)
-        new_volume = max(0.0, min(1.0, new_volume))
-
-        return round(new_volume, 4)
+        return round(
+            max(
+                0.0,
+                min(
+                    1.0,
+                    current_volume + (step * direction),
+                ),
+            ),
+            4,
+        )
 
     def _get_current_volume(self) -> Optional[float]:
         """Return the current normalized volume level."""
@@ -353,7 +381,8 @@ class MediaPlayerActions:
         raw_volume = state.attributes.get("volume_level")
 
         if isinstance(raw_volume, bool) or not isinstance(
-            raw_volume, (int, float, str)
+            raw_volume,
+            (int, float, str),
         ):
             return None
 
