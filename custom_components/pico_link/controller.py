@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Coroutine
-from typing import Any, Mapping, Optional, Tuple, TypeVar
+from collections.abc import Callable, Coroutine
+from typing import Any, Mapping, Optional, TypeVar
 
 from homeassistant.core import Event, HomeAssistant, callback
 
@@ -26,6 +26,7 @@ from .profiles.pico_p2b import PaddleSwitchPico
 from .utilities import SharedUtils
 
 _LOGGER = logging.getLogger(__name__)
+
 _T = TypeVar("_T")
 
 
@@ -41,26 +42,36 @@ class PicoController:
     """
     Controller for one configured Pico.
 
-    - Action modules own domain and gesture state
-    - Controller owns all asynchronous task lifecycles
-    - Controller selects the hardware profile and dispatches events
+    Responsibilities:
+        - Select the profile from the configured Pico type.
+        - Verify that reported hardware events match that configured type.
+        - Dispatch Pico events to the selected profile.
+        - Own all asynchronous task lifecycles.
+        - Stop domain gesture state during shutdown.
     """
 
-    def __init__(self, hass: HomeAssistant, conf: PicoConfig) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        conf: PicoConfig,
+    ) -> None:
         self.hass = hass
         self.conf = conf
 
-        # Shared non-domain helpers
+        # Shared non-domain helpers.
         self.utils = SharedUtils(self)
 
-        # Behavior selection
-        self._behavior: Optional[PicoProfile] = None
-        self._behavior_name: Optional[str] = None
-        self._unsub_event = None
         # All asynchronous work created for this Pico.
         self._tasks: set[asyncio.Future[Any]] = set()
 
-        # Domain-level behaviors
+        # Event-listener unsubscribe callback.
+        self._unsub_event: Optional[Callable[[], None]] = None
+
+        # Avoid repeatedly logging the same hardware-type problem for
+        # every event received from a mismatched or unsupported Pico.
+        self._last_type_error: Optional[str] = None
+
+        # Domain-level behaviors.
         self.actions: dict[str, DomainActions] = {
             "cover": CoverActions(self),
             "fan": FanActions(self),
@@ -69,9 +80,21 @@ class PicoController:
             "switch": SwitchActions(self),
         }
 
-    @property
-    def behavior_name(self) -> Optional[str]:
-        return self._behavior_name
+        # Configuration is authoritative. PicoConfig.validate() has
+        # already confirmed that conf.type is a supported configured type.
+        behavior_class = BEHAVIOR_CLASSES.get(self.conf.type)
+
+        if behavior_class is None:
+            raise ValueError(
+                f"Device {self.conf.device_id}: no behavior implementation "
+                f"exists for configured Pico type {self.conf.type!r}"
+            )
+
+        self._behavior: PicoProfile = behavior_class(self)
+
+    # =============================================================
+    # TASK MANAGEMENT
+    # =============================================================
 
     @callback
     def create_task(
@@ -97,7 +120,10 @@ class PicoController:
         return task
 
     @callback
-    def _handle_task_done(self, task: asyncio.Future[Any]) -> None:
+    def _handle_task_done(
+        self,
+        task: asyncio.Future[Any],
+    ) -> None:
         """Remove a completed task and report unexpected failures."""
         self._tasks.discard(task)
 
@@ -110,138 +136,169 @@ class PicoController:
             task_name = task.get_name() if isinstance(task, asyncio.Task) else "unnamed"
 
             _LOGGER.exception(
-                "Device %s: task '%s' failed",
+                "Device %s: task %r failed",
                 self.conf.device_id,
                 task_name,
             )
 
-    # ---------------------------------------------------------
-    # Start (subscribe to Pico events)
-    # ---------------------------------------------------------
-    async def async_start(self):
-        # Ensure all action modules start clean
-        for mod in self.actions.values():
-            reset = getattr(mod, "reset_state", None)
+    # =============================================================
+    # START
+    # =============================================================
+
+    async def async_start(self) -> None:
+        """Reset domain handlers and subscribe to Pico events."""
+        for action_handler in self.actions.values():
+            reset = getattr(
+                action_handler,
+                "reset_state",
+                None,
+            )
+
             if callable(reset):
                 reset()
 
         @callback
-        def handle_event(event: Event):
+        def handle_event(event: Event) -> None:
             data = event.data
 
-            # Only handle events for THIS Pico
+            # Only process events belonging to this configured Pico.
             if data.get("device_id") != self.conf.device_id:
                 return
 
+            # Configuration selects the behavior. The reported event
+            # type is used only to verify that the hardware matches.
+            if not self._event_type_matches(data):
+                return
+
             button, action = self._map_event(data)
-            if button is None or button not in SUPPORTED_BUTTONS:
+
+            if button is None or action is None or button not in SUPPORTED_BUTTONS:
                 return
 
-            # First event triggers behavior selection
-            if self._behavior is None:
-                if not self._select_behavior(data):
-                    return
-
-            # PYLANCE-SAFE GUARD
-            if self._behavior is None:
-                _LOGGER.error(
-                    "Device %s: behavior unexpectedly None during dispatch",
-                    self.conf.device_id,
-                )
-                return
-
-            # Dispatch to profile
             try:
                 if action == "press":
                     self._behavior.handle_press(button)
                 else:
                     self._behavior.handle_release(button)
 
-            except Exception as e:
-                _LOGGER.error(
-                    "Device %s error in behavior '%s' during %s/%s: %s",
+            except Exception:
+                _LOGGER.exception(
+                    "Device %s error in configured behavior %s during %s/%s",
                     self.conf.device_id,
-                    self._behavior_name,
+                    self.conf.type,
                     button,
                     action,
-                    e,
                 )
 
-        # Subscribe to lutron_caseta_button_event
         self._unsub_event = self.hass.bus.async_listen(
             PICO_EVENT_TYPE,
             handle_event,
         )
 
         _LOGGER.debug(
-            "Device %s: subscribed to %s",
+            "Device %s: subscribed to %s using configured behavior %s",
             self.conf.device_id,
             PICO_EVENT_TYPE,
+            self.conf.type,
         )
 
-    # ---------------------------------------------------------
-    # Select behavior profile (P2B, 2B, 3BRL, 4B)
-    # ---------------------------------------------------------
-    def _select_behavior(self, data: Mapping[str, Any]) -> bool:
+    # =============================================================
+    # HARDWARE-TYPE VERIFICATION
+    # =============================================================
+
+    def _event_type_matches(
+        self,
+        data: Mapping[str, Any],
+    ) -> bool:
+        """
+        Verify that the event's reported type matches the configuration.
+
+        The configured type remains authoritative. An event is ignored
+        when the reported hardware type is missing, unsupported, or does
+        not match the configured type.
+        """
         raw_type = data.get("type")
 
-        if not raw_type:
-            _LOGGER.error(
-                "Device %s: missing 'type' in event; cannot determine behavior.",
+        if not isinstance(raw_type, str):
+            self._log_type_error_once(
+                "invalid-type",
+                "Device %s: event is missing a valid Pico hardware type; "
+                "configured type is %s",
                 self.conf.device_id,
+                self.conf.type,
             )
             return False
 
-        normalized = PICO_TYPE_MAP.get(raw_type)
-        if not normalized:
-            _LOGGER.error(
-                "Device %s: unknown Pico type '%s'",
+        reported_type = PICO_TYPE_MAP.get(raw_type)
+
+        if reported_type is None:
+            self._log_type_error_once(
+                f"unsupported:{raw_type}",
+                "Device %s: reported unsupported Pico hardware type %r; "
+                "configured type is %s",
                 self.conf.device_id,
+                raw_type,
+                self.conf.type,
+            )
+            return False
+
+        if reported_type != self.conf.type:
+            self._log_type_error_once(
+                f"mismatch:{reported_type}:{self.conf.type}",
+                "Device %s is configured as %s but reported hardware "
+                "type %s (%s); this event will be ignored",
+                self.conf.device_id,
+                self.conf.type,
+                reported_type,
                 raw_type,
             )
             return False
 
-        behavior_cls = BEHAVIOR_CLASSES.get(normalized)
-        if not behavior_cls:
-            _LOGGER.error(
-                "Device %s: no implementation for Pico type '%s'",
-                self.conf.device_id,
-                normalized,
-            )
-            return False
+        # Clear a previous error after receiving a valid matching event.
+        self._last_type_error = None
 
-        self._behavior = behavior_cls(self)
-        self._behavior_name = normalized
-
-        _LOGGER.debug(
-            "Device %s: using behavior '%s' from HW type '%s'",
-            self.conf.device_id,
-            normalized,
-            raw_type,
-        )
         return True
 
-    # ---------------------------------------------------------
-    # Stop (unsubscribe + reset action modules)
-    # ---------------------------------------------------------
-    async def async_stop(self) -> None:
-        """Unsubscribe, cancel all Pico work, and await task completion."""
+    def _log_type_error_once(
+        self,
+        error_key: str,
+        message: str,
+        *args: Any,
+    ) -> None:
+        """Log each distinct hardware-type problem only once."""
+        if self._last_type_error == error_key:
+            return
 
-        # Prevent any new Pico events before cancelling current work.
+        self._last_type_error = error_key
+        _LOGGER.error(
+            message,
+            *args,
+        )
+
+    # =============================================================
+    # STOP
+    # =============================================================
+
+    async def async_stop(self) -> None:
+        """Unsubscribe, cancel all Pico work, and await completion."""
+        # Prevent new Pico events before canceling current work.
         if self._unsub_event is not None:
             self._unsub_event()
             self._unsub_event = None
 
-        # Let action modules clear their domain-specific gesture state.
-        # Light and media-player modules also cancel their local hold tasks.
+        # Let domain handlers clear their gesture-specific state.
         for action_handler in self.actions.values():
-            reset = getattr(action_handler, "reset_state", None)
+            reset = getattr(
+                action_handler,
+                "reset_state",
+                None,
+            )
 
             if callable(reset):
                 reset()
 
-        # Make a stable copy because task completion callbacks mutate
-        # self._tasks as each cancellation completes.
+        # Task completion callbacks mutate self._tasks, so operate on
+        # a stable copy.
         tasks = tuple(self._tasks)
 
         for task in tasks:
@@ -255,22 +312,30 @@ class PicoController:
 
         self._tasks.clear()
 
-    # ---------------------------------------------------------
-    # Convert raw Lutron event into normalized button + action
-    # ---------------------------------------------------------
+    # =============================================================
+    # EVENT NORMALIZATION
+    # =============================================================
+
     def _map_event(
         self,
         data: Mapping[str, Any],
-    ) -> Tuple[Optional[str], Optional[str]]:
-
+    ) -> tuple[Optional[str], Optional[str]]:
+        """Return a normalized button and press/release action."""
         button = data.get("button_type")
         action = data.get("action")
 
-        if not isinstance(button, str) or not isinstance(action, str):
+        if not isinstance(button, str):
             return None, None
 
-        action = action.lower()
-        if action not in ("press", "release"):
+        if not isinstance(action, str):
             return None, None
 
-        return button.lower(), action
+        normalized_action = action.lower()
+
+        if normalized_action not in ("press", "release"):
+            return None, None
+
+        return (
+            button.lower(),
+            normalized_action,
+        )
