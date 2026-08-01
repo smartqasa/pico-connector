@@ -3,179 +3,307 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import TYPE_CHECKING, Optional
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
     from ..controller import PicoController
 
 _LOGGER = logging.getLogger(__name__)
 
+TapAction = Callable[[], None]
+
 
 class LightActions:
     """
-    Unified light action module implementing the full action API.
+    Light behavior for all supported Pico profiles.
 
-    Profiles:
-        - only route press/release events
-        - do NOT contain light logic
+    P2B / 2B:
+        ON tap   -> turn on to light_on_pct
+        ON hold  -> ramp brightness upward
+        OFF tap  -> turn off
+        OFF hold -> ramp brightness downward
 
-    LightActions:
-        - tap vs hold
-        - stepping
-        - ramping
-        - on/off/low_pct behavior
-        - HA service calls
-        - profile-aware semantics (P2B vs 3BRL, etc.)
+    3BRL:
+        ON tap      -> turn on to light_on_pct
+        OFF tap     -> turn off
+        RAISE tap   -> one brightness step up
+        RAISE hold  -> ramp brightness upward
+        LOWER tap   -> one brightness step down
+        LOWER hold  -> ramp brightness downward
+        STOP tap    -> execute middle_button actions, otherwise no-op
     """
+
+    MAX_RAMP_STEPS = 50
+    TARGET_CACHE_SECONDS = 2.0
 
     def __init__(self, ctrl: "PicoController") -> None:
         self.ctrl = ctrl
 
-        # Track which logical buttons are currently pressed.
-        # We now also track ON / OFF to support tap-vs-hold
-        # behavior for certain profiles (e.g. P2B, 2B).
-        self._pressed: dict[str, bool] = {
-            "raise": False,
-            "lower": False,
-            "on": False,
-            "off": False,
-        }
+        # Only one ON/OFF/RAISE/LOWER gesture may be active at a time.
+        self._active_button: Optional[str] = None
+        self._is_holding = False
+        self._gesture_generation = 0
 
-        # Track when each button was pressed (mainly for debugging / future use)
-        self._press_ts: dict[str, float] = {}
+        # Retain the delayed hold task so a release or newer press can
+        # cancel it before or during a ramp.
+        self._hold_task: Optional[asyncio.Task[Any]] = None
 
-        # Async tasks per button (hold lifecycle / ramp, etc.)
-        self._tasks: dict[str, Optional[asyncio.Task]] = {
-            "raise": None,
-            "lower": None,
-            "on": None,
-            "off": None,
-        }
+        # Track the most recently requested brightness so rapid taps and
+        # ramps do not depend on immediate Home Assistant state updates.
+        self._target_brightness_pct: Optional[int] = None
+        self._target_updated_at = 0.0
 
-        # Whether a button has transitioned to a "hold" state
-        # (used primarily for ON/OFF tap-vs-hold).
-        self._is_holding: dict[str, bool] = {
-            "raise": False,
-            "lower": False,
-            "on": False,
-            "off": False,
-        }
-
-    # ==============================================================
-    # Profile-aware helpers
-    # ==============================================================
+    # =============================================================
+    # PROFILE HELPERS
+    # =============================================================
 
     def _supports_onoff_hold(self) -> bool:
-        """
-        Return True if ON/OFF should have tap-vs-hold behavior for lights.
-        """
+        """Return True when ON/OFF must distinguish taps from holds."""
         return self.ctrl.conf.type in ("P2B", "2B")
 
-    # ==============================================================
-    # Motion abort helper
-    # ==============================================================
+    def _transition_data(
+        self,
+        *,
+        turning_on: bool,
+    ) -> dict[str, int]:
+        """Return the configured transition data for a tap action."""
+        transition = (
+            self.ctrl.conf.light_transition_on
+            if turning_on
+            else self.ctrl.conf.light_transition_off
+        )
 
-    def _abort_motion(self) -> None:
+        return {"transition": transition} if transition > 0 else {}
+
+    # =============================================================
+    # GESTURE STATE
+    # =============================================================
+
+    def _clear_gesture(self) -> bool:
         """
-        Immediately stop any hold/ramp lifecycle (ON/OFF/RAISE/LOWER).
+        Cancel the active gesture.
 
-        Rule:
-          - Any new press represents new intent and cancels any existing motion.
-          - Any tap (release resulting in tap) also stops any motion before acting.
+        Returns True when the gesture had crossed the hold threshold.
         """
-        for btn in ("raise", "lower", "on", "off"):
-            self._pressed[btn] = False
-            self._is_holding[btn] = False
+        was_holding = self._is_holding
 
-            task = self._tasks.get(btn)
-            if task and not task.done():
-                task.cancel()
-            self._tasks[btn] = None
+        self._gesture_generation += 1
+        self._active_button = None
+        self._is_holding = False
 
-    # ==============================================================
-    # Transition parameter helper
-    # ==============================================================
+        if self._hold_task and not self._hold_task.done():
+            self._hold_task.cancel()
 
-    def _light_transition_param(self, *, turning_on: bool) -> dict:
+        self._hold_task = None
+
+        return was_holding
+
+    def _begin_gesture(self, button: str) -> int:
+        """Cancel the previous gesture and activate a new one."""
+        self._clear_gesture()
+        self._active_button = button
+
+        return self._gesture_generation
+
+    def _gesture_is_current(
+        self,
+        button: str,
+        generation: int,
+    ) -> bool:
+        """Return True when a task still belongs to the active gesture."""
+        return generation == self._gesture_generation and self._active_button == button
+
+    def _arm_hold(
+        self,
+        button: str,
+        direction: int,
+        generation: int,
+    ) -> None:
+        """Schedule hold detection for the active gesture."""
+        self._hold_task = self.ctrl.create_task(
+            self._hold_lifecycle(
+                button,
+                direction,
+                generation,
+            ),
+            f"light-{button}-hold",
+        )
+
+    # =============================================================
+    # BRIGHTNESS TARGET STATE
+    # =============================================================
+
+    def _set_brightness_target(self, percentage: int) -> None:
+        """Store the latest requested brightness percentage."""
+        self._target_brightness_pct = max(
+            0,
+            min(100, percentage),
+        )
+        self._target_updated_at = time.monotonic()
+
+    def _clear_brightness_target(self) -> None:
+        """Discard the optimistic brightness target."""
+        self._target_brightness_pct = None
+        self._target_updated_at = 0.0
+
+    def _brightness_for_step(self) -> Optional[int]:
         """
-        Return a transition parameter dict for light service calls.
+        Return the recent requested brightness or resynchronize from HA.
 
-        If transition is 0, return {} so it is NOT passed to HA.
+        The short cache lets rapid taps build on the previous command
+        without keeping an optimistic value authoritative indefinitely.
         """
-        if turning_on:
-            transition = self.ctrl.conf.light_transition_on
-        else:
-            transition = self.ctrl.conf.light_transition_off
+        now = time.monotonic()
 
-        if transition > 0:
-            return {"transition": transition}
+        if (
+            self._target_brightness_pct is not None
+            and now - self._target_updated_at <= self.TARGET_CACHE_SECONDS
+        ):
+            return self._target_brightness_pct
 
-        return {}
+        percentage = self._get_current_brightness_pct()
 
-    # ==============================================================
-    # API METHODS (called by profiles)
-    # ==============================================================
+        if percentage is not None:
+            self._set_brightness_target(percentage)
 
-    # --- ON --------------------------------------------------------
-    def press_on(self):
-        """
-        ON behavior:
+        return percentage
 
-        - P2B / 2B:
-            * Tap  -> turn_on(light_on_pct)
-            * Hold -> ramp brightness up until release
-        - Other profiles:
-            * ON is simple turn_on (tap-only)
-        """
-        # Any press = new intent; stop any ongoing motion immediately
-        self._abort_motion()
+    def _get_current_brightness_pct(self) -> Optional[int]:
+        """Return the current brightness percentage of the primary light."""
+        state = self.ctrl.utils.get_entity_state()
 
-        if self._supports_onoff_hold():
-            self._start_onoff_hold(button="on", direction=1)
-        else:
-            self.ctrl.create_task(
-                self._turn_on(),
-                "light-turn-on",
+        if not state:
+            return None
+
+        if state.state == "off":
+            return 0
+
+        raw_brightness = state.attributes.get("brightness")
+
+        if raw_brightness is None:
+            return 0
+
+        if isinstance(raw_brightness, bool) or not isinstance(
+            raw_brightness,
+            (int, float, str),
+        ):
+            return 0
+
+        try:
+            brightness = float(raw_brightness)
+        except ValueError:
+            return 0
+
+        return max(
+            0,
+            min(
+                100,
+                round((brightness / 255.0) * 100),
+            ),
+        )
+
+    def _calculate_next_brightness(
+        self,
+        current_percentage: int,
+        direction: int,
+    ) -> int:
+        """Return the next clamped brightness percentage."""
+        new_percentage = current_percentage + (
+            self.ctrl.conf.light_step_pct * direction
+        )
+
+        if direction < 0:
+            # LOWER while the light is off should not turn it on.
+            if current_percentage == 0:
+                return 0
+
+            new_percentage = max(
+                self.ctrl.conf.light_low_pct,
+                new_percentage,
             )
 
-    def release_on(self):
+        return max(
+            1,
+            min(100, new_percentage),
+        )
+
+    # =============================================================
+    # TAP ACTION SCHEDULING
+    # =============================================================
+
+    def _schedule_turn_on(
+        self,
+        task_name: str = "light-turn-on",
+    ) -> None:
+        """Set the optimistic target and schedule the ON tap action."""
+        percentage = self.ctrl.conf.light_on_pct
+        self._set_brightness_target(percentage)
+
+        self.ctrl.create_task(
+            self._turn_on(percentage),
+            task_name,
+        )
+
+    def _schedule_turn_off(
+        self,
+        task_name: str = "light-turn-off",
+    ) -> None:
+        """Set the optimistic target to OFF and schedule the tap action."""
+        self._set_brightness_target(0)
+
+        self.ctrl.create_task(
+            self._turn_off(),
+            task_name,
+        )
+
+    # =============================================================
+    # PROFILE ENTRY POINTS
+    # =============================================================
+
+    def press_on(self) -> None:
         if self._supports_onoff_hold():
-            self._finalize_onoff_hold(button="on", tap_action=self._turn_on)
-        # For tap-only profiles, ON release is a no-op.
+            self._start_onoff_gesture(
+                "on",
+                direction=1,
+            )
+            return
 
-    # --- OFF -------------------------------------------------------
-    def press_off(self):
-        """
-        OFF behavior:
+        self._clear_gesture()
+        self._schedule_turn_on()
 
-        - P2B / 2B:
-            * Tap  -> turn_off
-            * Hold -> ramp brightness down until release
-        - Other profiles:
-            * OFF is simple turn_off (tap-only)
-        """
-        # Any press = new intent; stop any ongoing motion immediately
-        self._abort_motion()
-
+    def release_on(self) -> None:
         if self._supports_onoff_hold():
-            self._start_onoff_hold(button="off", direction=-1)
-        else:
-            self.ctrl.create_task(
-                self._turn_off(),
-                "light-turn-off",
+            self._release_onoff_gesture(
+                "on",
+                tap_action=lambda: self._schedule_turn_on("light-on-tap"),
             )
 
-    def release_off(self):
+    def press_off(self) -> None:
         if self._supports_onoff_hold():
-            self._finalize_onoff_hold(button="off", tap_action=self._turn_off)
-        # For tap-only profiles, OFF release is a no-op.
+            self._start_onoff_gesture(
+                "off",
+                direction=-1,
+            )
+            return
 
-    # --- STOP ------------------------------------------------------
-    def press_stop(self):
-        """
-        STOP = execute middle_button actions (Lutron-like)
-        or no-op if none defined.
-        """
+        self._clear_gesture()
+        self._schedule_turn_off()
+
+    def release_off(self) -> None:
+        if self._supports_onoff_hold():
+            self._release_onoff_gesture(
+                "off",
+                tap_action=lambda: self._schedule_turn_off("light-off-tap"),
+            )
+
+    def press_stop(self) -> None:
+        self._clear_gesture()
+
+        # Custom middle-button actions may change brightness outside
+        # this handler, so resynchronize on the next brightness action.
+        self._clear_brightness_target()
+
         actions = self.ctrl.conf.middle_button
 
         if not actions:
@@ -187,271 +315,230 @@ class LightActions:
             "light-middle-button",
         )
 
-    def release_stop(self):
+    def release_stop(self) -> None:
         pass
 
-    # --- RAISE -----------------------------------------------------
-    def press_raise(self):
-        """
-        Used by profiles with dedicated raise/lower buttons (e.g. 3BRL).
-
-        Behavior:
-        - Press → single brightness step up
-        - Hold  → continuous ramp up after hold_time
-        """
-        # Any press = new intent; stop any ongoing motion immediately
-        self._abort_motion()
-        self._start_raise_lower("raise", direction=1)
-
-    def release_raise(self):
-        self._stop_raise_lower("raise")
-
-    # --- LOWER -----------------------------------------------------
-    def press_lower(self):
-        """
-        Used by profiles with dedicated raise/lower buttons (e.g. 3BRL).
-
-        Behavior:
-        - Press → single brightness step down
-        - Hold  → continuous ramp down after hold_time
-        """
-        # Any press = new intent; stop any ongoing motion immediately
-        self._abort_motion()
-        self._start_raise_lower("lower", direction=-1)
-
-    def release_lower(self):
-        self._stop_raise_lower("lower")
-
-    # ==============================================================
-    # INTERNAL STATEFUL BEHAVIOR (RAISE/LOWER)
-    # ==============================================================
-
-    def _start_raise_lower(self, button: str, direction: int):
-        self._pressed[button] = True
-        self._is_holding[button] = False
-        self._press_ts[button] = time.time()
-
-        self.ctrl.create_task(
-            self._step_brightness(direction),
-            f"light-{button}-step",
+    def press_raise(self) -> None:
+        self._start_raise_lower(
+            "raise",
+            direction=1,
         )
 
-        task = self.ctrl.create_task(
-            self._hold_lifecycle(button, direction),
-            f"light-{button}-hold",
-        )
-        self._tasks[button] = task
+    def release_raise(self) -> None:
+        self._release_raise_lower("raise")
 
-    def _stop_raise_lower(self, button: str):
-        self._pressed[button] = False
-
-        task = self._tasks.get(button)
-        if task and not task.done():
-            task.cancel()
-
-        self._tasks[button] = None
-        self._is_holding[button] = False
-
-    # ==============================================================
-    # INTERNAL STATEFUL BEHAVIOR (ON/OFF TAP vs HOLD for P2B/2B)
-    # ==============================================================
-
-    def _start_onoff_hold(self, button: str, direction: int):
-        """
-        Common press handler for ON/OFF when tap-vs-hold is enabled.
-
-        - If released before hold_time → TAP (simple on/off)
-        - If still pressed after hold_time → HOLD (continuous ramp)
-        """
-        self._pressed[button] = True
-        self._is_holding[button] = False
-        self._press_ts[button] = time.time()
-
-        task = self.ctrl.create_task(
-            self._onoff_hold_lifecycle(button, direction),
-            f"light-{button}-hold",
-        )
-        self._tasks[button] = task
-
-    async def _onoff_hold_lifecycle(self, button: str, direction: int):
-        try:
-            await asyncio.sleep(self.ctrl.utils._hold_time)
-
-            if not self._pressed.get(button):
-                # Released before hold_time → treat as TAP in release_*.
-                return
-
-            # HOLD → continuous ramp
-            self._is_holding[button] = True
-            await self._ramp(button, direction)
-
-        except asyncio.CancelledError:
-            # Normal path when released before hold_time
-            pass
-
-    def _finalize_onoff_hold(self, button: str, tap_action):
-        """
-        Common release handler for ON/OFF when tap-vs-hold is enabled.
-
-        - If no ramp ever started (_is_holding[button] is False):
-            → this was a TAP → stop any motion then call tap_action
-        - If ramp started:
-            → stop ramp, do NOT toggle again
-        """
-        self._pressed[button] = False
-
-        task = self._tasks.get(button)
-        if task and not task.done():
-            task.cancel()
-
-        if not self._is_holding.get(button, False):
-            # TAP: authoritative stop gesture
-            self._abort_motion()
-            self.ctrl.create_task(
-                tap_action(),
-                f"light-{button}-tap",
-            )
-
-        # Reset state for this button
-        self._tasks[button] = None
-        self._is_holding[button] = False
-
-    # ==============================================================
-    # TAP / HOLD LIFECYCLE (RAISE/LOWER)
-    # ==============================================================
-
-    async def _hold_lifecycle(self, button: str, direction: int):
-        try:
-            await asyncio.sleep(self.ctrl.utils._hold_time)
-
-            if not self._pressed.get(button):
-                return  # TAP only
-
-            # HOLD → continuous ramp
-            self._is_holding[button] = True
-            await self._ramp(button, direction)
-
-        except asyncio.CancelledError:
-            # Released before hold_time → no ramp
-            pass
-
-    # ==============================================================
-    # DOMAIN LOGIC
-    # ==============================================================
-
-    async def _turn_on(self):
-        pct = self.ctrl.conf.light_on_pct
-
-        params = {
-            "brightness_pct": pct,
-            **self._light_transition_param(turning_on=True),
-        }
-
-        await self.ctrl.utils.call_service(
-            "turn_on",
-            params,
-            domain="light",
+    def press_lower(self) -> None:
+        self._start_raise_lower(
+            "lower",
+            direction=-1,
         )
 
-    async def _turn_off(self):
-        params = {
-            **self._light_transition_param(turning_on=False),
-        }
+    def release_lower(self) -> None:
+        self._release_raise_lower("lower")
 
-        await self.ctrl.utils.call_service(
-            "turn_off",
-            params,
-            domain="light",
+    # =============================================================
+    # ON / OFF TAP-HOLD GESTURES
+    # =============================================================
+
+    def _start_onoff_gesture(
+        self,
+        button: str,
+        direction: int,
+    ) -> None:
+        """Start a P2B/2B ON or OFF tap-versus-hold gesture."""
+        generation = self._begin_gesture(button)
+
+        self._arm_hold(
+            button,
+            direction,
+            generation,
         )
 
-    async def _step_brightness(self, direction: int):
-        """
-        TAP = single step brightness change.
-        """
-        step_pct = self.ctrl.conf.light_step_pct
-        low_pct = self.ctrl.conf.light_low_pct
-
-        state = self.ctrl.utils.get_entity_state()
-        if not state:
+    def _release_onoff_gesture(
+        self,
+        button: str,
+        *,
+        tap_action: TapAction,
+    ) -> None:
+        """Complete a P2B/2B ON or OFF gesture."""
+        # Ignore a release belonging to an older gesture.
+        if self._active_button != button:
             return
 
-        raw_brightness = state.attributes.get("brightness")
-        if raw_brightness is None:
-            current_pct = 0
-        else:
-            try:
-                current_pct = round((int(raw_brightness) / 255) * 100)
-            except Exception:  # defensive
-                current_pct = 0
+        was_holding = self._clear_gesture()
 
-        new_pct = current_pct + (step_pct * direction)
+        if not was_holding:
+            tap_action()
 
-        # Clamp
-        if direction < 0:
-            new_pct = max(low_pct, new_pct)
-        new_pct = min(100, max(1, new_pct))
+    # =============================================================
+    # RAISE / LOWER GESTURES
+    # =============================================================
 
-        _LOGGER.debug(
-            "LightActions: step_brightness direction=%s current=%s new=%s",
+    def _start_raise_lower(
+        self,
+        button: str,
+        direction: int,
+    ) -> None:
+        """Perform one immediate step and arm continuous ramping."""
+        generation = self._begin_gesture(button)
+
+        self._schedule_brightness_step(
             direction,
-            current_pct,
-            new_pct,
+            task_name=f"light-{button}-step",
         )
 
-        await self.ctrl.utils.call_service(
-            "turn_on",
-            {"brightness_pct": new_pct},
-            domain="light",
+        self._arm_hold(
+            button,
+            direction,
+            generation,
         )
 
-    # ==============================================================
-    # RAMP LOGIC (continuous)
-    # ==============================================================
+    def _release_raise_lower(self, button: str) -> None:
+        """Complete the active RAISE or LOWER gesture."""
+        # Ignore a release belonging to an older or superseded gesture.
+        if self._active_button != button:
+            return
 
-    async def _ramp(self, button: str, direction: int):
-        """
-        Continuous ramp:
-        step by light_step_pct every step_time
-        UNTIL:
-        - button is released
-        - OR max iterations (50) reached
-        """
-        step_time = self.ctrl.utils._step_time
-        MAX_STEPS = 50
+        self._clear_gesture()
 
-        iterations = 0
+    # =============================================================
+    # HOLD / RAMP LIFECYCLE
+    # =============================================================
 
-        while self._pressed.get(button, False):
-            if iterations >= MAX_STEPS:
+    async def _hold_lifecycle(
+        self,
+        button: str,
+        direction: int,
+        generation: int,
+    ) -> None:
+        """Begin continuous ramping after the hold threshold."""
+        try:
+            await asyncio.sleep(self.ctrl.utils._hold_time)
+
+            if not self._gesture_is_current(
+                button,
+                generation,
+            ):
+                return
+
+            self._is_holding = True
+
+            for _ in range(self.MAX_RAMP_STEPS):
+                if not self._gesture_is_current(
+                    button,
+                    generation,
+                ):
+                    return
+
+                current_percentage = self._brightness_for_step()
+
+                if current_percentage is None:
+                    return
+
+                new_percentage = self._calculate_next_brightness(
+                    current_percentage,
+                    direction,
+                )
+
+                # Stop naturally at the configured endpoint.
+                if new_percentage == current_percentage:
+                    return
+
+                self._set_brightness_target(new_percentage)
+
+                await self._set_brightness(new_percentage)
+
+                if not self._gesture_is_current(
+                    button,
+                    generation,
+                ):
+                    return
+
+                await asyncio.sleep(self.ctrl.utils._step_time)
+
+            if self._gesture_is_current(
+                button,
+                generation,
+            ):
                 _LOGGER.warning(
-                    "LightActions: ramp stopped after %s steps (safety limit) "
-                    "for device %s button %s",
-                    MAX_STEPS,
+                    "Light ramp stopped after %s steps for device %s button %s",
+                    self.MAX_RAMP_STEPS,
                     self.ctrl.conf.device_id,
                     button,
                 )
-                break
 
-            await self._step_brightness(direction)
-            iterations += 1
-            await asyncio.sleep(step_time)
+        except asyncio.CancelledError:
+            # Expected when released or superseded by another command.
+            pass
 
-    # ==============================================================
-    # RESET STATE (required by controller to avoid runaway loops)
-    # ==============================================================
+    # =============================================================
+    # LIGHT OPERATIONS
+    # =============================================================
 
-    def reset_state(self):
-        """Stop all tasks and clear pressed/hold/ramp state."""
-        # Cancel running tasks
-        for t in self._tasks.values():
-            if t and not t.done():
-                t.cancel()
+    def _schedule_brightness_step(
+        self,
+        direction: int,
+        *,
+        task_name: str,
+    ) -> None:
+        """
+        Calculate and store a step synchronously, then submit it.
 
-        # Reset tracking
-        for key in self._pressed:
-            self._pressed[key] = False
-            self._is_holding[key] = False
-            self._tasks[key] = None
+        Updating the target before task creation lets rapid taps build
+        on the previous requested brightness.
+        """
+        current_percentage = self._brightness_for_step()
 
-        # Clear press timestamps
-        self._press_ts.clear()
+        if current_percentage is None:
+            return
+
+        new_percentage = self._calculate_next_brightness(
+            current_percentage,
+            direction,
+        )
+
+        if new_percentage == current_percentage:
+            return
+
+        self._set_brightness_target(new_percentage)
+
+        self.ctrl.create_task(
+            self._set_brightness(new_percentage),
+            task_name,
+        )
+
+    async def _turn_on(self, percentage: int) -> None:
+        await self.ctrl.utils.call_service(
+            "turn_on",
+            {
+                "brightness_pct": percentage,
+                **self._transition_data(turning_on=True),
+            },
+            domain="light",
+        )
+
+    async def _turn_off(self) -> None:
+        await self.ctrl.utils.call_service(
+            "turn_off",
+            self._transition_data(turning_on=False),
+            domain="light",
+        )
+
+    async def _set_brightness(
+        self,
+        percentage: int,
+    ) -> None:
+        await self.ctrl.utils.call_service(
+            "turn_on",
+            {"brightness_pct": percentage},
+            domain="light",
+        )
+
+    # =============================================================
+    # LIFECYCLE
+    # =============================================================
+
+    def reset_state(self) -> None:
+        """Cancel the active gesture and clear optimistic state."""
+        self._clear_gesture()
+        self._clear_brightness_target()

@@ -328,7 +328,7 @@ class CoverActions:
         generation: int,
     ) -> None:
         """Stop previous continuous movement before stepping."""
-        await self._stop()
+        await self._stop(blocking=True)
 
         if generation != self._gesture_generation or self._active_button != button:
             return
@@ -337,7 +337,7 @@ class CoverActions:
 
     async def _stop_then_execute(self, actions: Any) -> None:
         """Stop Pico movement before running custom middle-button actions."""
-        await self._stop()
+        await self._stop(blocking=True)
         await self.ctrl.utils.execute_button_action(actions)
 
     # =============================================================
@@ -369,11 +369,16 @@ class CoverActions:
             domain="cover",
         )
 
-    async def _stop(self) -> None:
+    async def _stop(
+        self,
+        *,
+        blocking: bool = False,
+    ) -> None:
         await self.ctrl.utils.call_service(
             "stop_cover",
             {},
             domain="cover",
+            blocking=blocking,
         )
 
     async def _start_motion(self, direction: str) -> None:

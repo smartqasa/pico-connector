@@ -28,6 +28,8 @@ PICO_TYPE_MAP = {
     "Pico4ButtonScene": "4B",
 }
 
+ON_OFF_PICO_TYPES = frozenset({"P2B", "2B"})
+
 # --------------------------------------------------------------------
 # BUTTONS EMITTED BY LUTRON CASETA
 # (These are the normalized forms used throughout the controller.)
@@ -42,3 +44,11 @@ SUPPORTED_BUTTONS = [
     "raise",
     "stop",
 ]
+
+DOMAIN_ENTITY_FIELDS = {
+    "cover": "covers",
+    "fan": "fans",
+    "light": "lights",
+    "media_player": "media_players",
+    "switch": "switches",
+}

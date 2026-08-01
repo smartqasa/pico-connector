@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Optional, cast
 
 from homeassistant.core import HomeAssistant
 
@@ -10,11 +10,22 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+# Single source of truth for the relationship between a Home Assistant
+# domain and the corresponding PicoConfig entity-list field.
+_DOMAIN_ENTITY_FIELDS = {
+    "cover": "covers",
+    "light": "lights",
+    "fan": "fans",
+    "media_player": "media_players",
+    "switch": "switches",
+}
+
 
 class SharedUtils:
     """
-    PURE utilities shared by all action modules.
-    Zero domain-specific state.
+    Shared entity-resolution and service-execution helpers.
+
+    Domain-specific gesture state remains owned by the action modules.
     """
 
     def __init__(self, ctrl: "PicoController") -> None:
@@ -22,136 +33,196 @@ class SharedUtils:
         self.hass: HomeAssistant = ctrl.hass
         self.conf = ctrl.conf
 
-        # Timing parameters
+        # Convert configured millisecond values once for use by
+        # tap-versus-hold and ramp behavior.
         self._hold_time = self.conf.hold_time_ms / 1000.0
         self._step_time = self.conf.step_time_ms / 1000.0
 
-        # Removed controller._pressed / controller._tasks usage entirely
-
-    # -------------------------------------------------------------
+    # =============================================================
     # ENTITY RESOLUTION
-    # -------------------------------------------------------------
+    # =============================================================
+
+    def entities_for_domain(self, domain: str) -> list[str]:
+        """Return all configured entities for a supported domain."""
+        field_name = _DOMAIN_ENTITY_FIELDS.get(domain)
+
+        if field_name is None:
+            return []
+
+        return cast(
+            list[str],
+            getattr(self.conf, field_name),
+        )
+
     def entity_domain(self) -> Optional[str]:
-        if self.conf.covers:
-            return "cover"
-        if self.conf.lights:
-            return "light"
-        if self.conf.fans:
-            return "fan"
-        if self.conf.media_players:
-            return "media_player"
-        if self.conf.switches:
-            return "switch"
+        """Return the single configured entity domain."""
+        for domain in _DOMAIN_ENTITY_FIELDS:
+            if self.entities_for_domain(domain):
+                return domain
+
         return None
 
-    def primary_entity(self) -> Optional[str]:
-        if self.conf.covers:
-            return self.conf.covers[0]
-        if self.conf.lights:
-            return self.conf.lights[0]
-        if self.conf.fans:
-            return self.conf.fans[0]
-        if self.conf.media_players:
-            return self.conf.media_players[0]
-        if self.conf.switches:
-            return self.conf.switches[0]
-        return None
+    def primary_entity(
+        self,
+        domain: Optional[str] = None,
+    ) -> Optional[str]:
+        """Return the first configured entity for a domain."""
+        selected_domain = domain or self.entity_domain()
 
-    def get_entity_state(self):
-        entity_id = self.primary_entity()
-        if not entity_id:
+        if selected_domain is None:
             return None
+
+        entities = self.entities_for_domain(selected_domain)
+
+        return entities[0] if entities else None
+
+    def get_entity_state(
+        self,
+        domain: Optional[str] = None,
+    ):
+        """Return the state of the primary configured entity."""
+        entity_id = self.primary_entity(domain)
+
+        if entity_id is None:
+            return None
+
         return self.hass.states.get(entity_id)
 
-    # -------------------------------------------------------------
-    # GENERIC SERVICE CALLER
-    # -------------------------------------------------------------
-    async def call_service(
+    # =============================================================
+    # SERVICE EXECUTION
+    # =============================================================
+
+    async def _execute_service_call(
         self,
-        service: str,
-        data: Dict[str, Any],
-        *,
         domain: str,
-        continue_on_error: bool = False,
+        service: str,
+        data: dict[str, Any],
+        *,
+        blocking: bool,
+        target: Optional[dict[str, Any]] = None,
     ) -> None:
-        match domain:
-            case "cover":
-                entities = self.conf.covers
-            case "light":
-                entities = self.conf.lights
-            case "fan":
-                entities = self.conf.fans
-            case "media_player":
-                entities = self.conf.media_players
-            case "switch":
-                entities = self.conf.switches
-            case _:
-                entities = []
-
-        svc_data = dict(data)
-        if entities:
-            svc_data["entity_id"] = entities
-
-        try:
-            await self.hass.services.async_call(
-                domain,
-                service,
-                svc_data,
-                blocking=False,
-            )
-        except Exception as err:
-            msg = (
-                f"Device {self.conf.device_id}: error calling "
-                f"{domain}.{service}({svc_data}): {err}"
-            )
-            if continue_on_error:
-                _LOGGER.debug(msg)
-            else:
-                _LOGGER.error(msg)
-
-    # -------------------------------------------------------------
-    # ACTION EXECUTION (Scenes & 4B)
-    # -------------------------------------------------------------
-    async def execute_button_action(self, action):
-        if isinstance(action, list):
-            for a in action:
-                await self.execute_button_action(a)
-            return
-
-        if not isinstance(action, dict):
-            _LOGGER.error(
-                "Device %s: invalid action format: %s",
-                self.ctrl.conf.device_id,
-                action,
-            )
-            return
-
-        try:
-            domain, service = action["action"].split(".", 1)
-        except Exception:
-            _LOGGER.error(
-                "Device %s: invalid action string '%s'",
-                self.ctrl.conf.device_id,
-                action.get("action"),
-            )
-            return
-
-        data = action.get("data", {})
-        target = action.get("target")
-
+        """Execute and centrally log a Home Assistant service call."""
         try:
             await self.hass.services.async_call(
                 domain,
                 service,
                 data,
-                blocking=True,
+                blocking=blocking,
                 target=target,
             )
-        except Exception as err:
-            _LOGGER.error(
-                "Device %s: error calling %s.%s → %s",
-                self.ctrl.conf.device_id,
+        except Exception:
+            _LOGGER.exception(
+                "Device %s: error calling %s.%s with data=%s target=%s",
+                self.conf.device_id,
                 domain,
                 service,
-                err,
+                data,
+                target,
             )
+
+    async def call_service(
+        self,
+        service: str,
+        data: dict[str, Any],
+        *,
+        domain: str,
+        blocking: bool = False,
+    ) -> None:
+        """Call a service for every configured entity in a domain."""
+        entities = self.entities_for_domain(domain)
+
+        if not entities:
+            _LOGGER.error(
+                "Device %s: no entities configured for domain %s; cannot call %s.%s",
+                self.conf.device_id,
+                domain,
+                domain,
+                service,
+            )
+            return
+
+        service_data = dict(data)
+        service_data["entity_id"] = entities
+
+        await self._execute_service_call(
+            domain,
+            service,
+            service_data,
+            blocking=blocking,
+        )
+
+    # =============================================================
+    # CONFIGURED ACTION EXECUTION
+    # =============================================================
+
+    async def execute_button_action(
+        self,
+        action: Any,
+    ) -> None:
+        """Execute one configured action or an ordered list of actions."""
+        if isinstance(action, list):
+            for item in action:
+                await self.execute_button_action(item)
+
+            return
+
+        if not isinstance(action, dict):
+            _LOGGER.error(
+                "Device %s: invalid action format: %r",
+                self.conf.device_id,
+                action,
+            )
+            return
+
+        action_name = action.get("action")
+
+        if not isinstance(action_name, str):
+            _LOGGER.error(
+                "Device %s: invalid action string %r",
+                self.conf.device_id,
+                action_name,
+            )
+            return
+
+        domain, separator, service = action_name.partition(".")
+
+        if not separator or not domain or not service:
+            _LOGGER.error(
+                "Device %s: invalid action string %r",
+                self.conf.device_id,
+                action_name,
+            )
+            return
+
+        raw_data = action.get("data", {})
+
+        if not isinstance(raw_data, dict):
+            _LOGGER.error(
+                "Device %s: data for %s must be a mapping",
+                self.conf.device_id,
+                action_name,
+            )
+            return
+
+        raw_target = action.get("target")
+
+        if raw_target is not None and not isinstance(
+            raw_target,
+            dict,
+        ):
+            _LOGGER.error(
+                "Device %s: target for %s must be a mapping",
+                self.conf.device_id,
+                action_name,
+            )
+            return
+
+        # Configured action lists are deliberately blocking so each
+        # action completes before the next action begins.
+        await self._execute_service_call(
+            domain,
+            service,
+            raw_data,
+            blocking=True,
+            target=raw_target,
+        )
