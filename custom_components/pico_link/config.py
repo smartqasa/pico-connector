@@ -11,8 +11,6 @@ from .const import VALID_PICO_TYPES
 
 _LOGGER = logging.getLogger(__name__)
 
-_LUTRON_DOMAIN = "lutron_caseta"
-
 _VALID_4B_BUTTONS = frozenset(
     {
         "button_1",
@@ -134,42 +132,12 @@ class PicoConfig:
 # ================================================================
 
 
-def _is_lutron_device(device: Any) -> bool:
-    """Return True when a registry device belongs to Lutron Caseta."""
-    return any(domain == _LUTRON_DOMAIN for domain, _identifier in device.identifiers)
-
-
-def _validate_lutron_device_id(
-    hass: HomeAssistant,
-    device_id: str,
-) -> str:
-    """Verify that a device ID belongs to Lutron Caseta."""
-    device_registry = dr.async_get(hass)
-    device = device_registry.async_get(device_id)
-
-    if device is None:
-        raise ValueError(
-            f"No device exists in the registry with device_id {device_id!r}."
-        )
-
-    if not _is_lutron_device(device):
-        raise ValueError(f"Device {device_id!r} is not a Lutron Caseta device.")
-
-    return device_id
-
-
 def lookup_device_id(
     hass: HomeAssistant,
     name: str,
 ) -> str | None:
-    """Resolve a unique Lutron device by user or registry name."""
+    """Resolve a unique device by user-assigned or registry name."""
     device_registry = dr.async_get(hass)
-
-    lutron_devices = [
-        device
-        for device in device_registry.devices.values()
-        if _is_lutron_device(device)
-    ]
 
     # Prefer the user-assigned name over the integration-provided name.
     for attribute in (
@@ -177,13 +145,15 @@ def lookup_device_id(
         "name",
     ):
         matches = [
-            device for device in lutron_devices if getattr(device, attribute) == name
+            device
+            for device in device_registry.devices.values()
+            if getattr(device, attribute) == name
         ]
 
         if len(matches) > 1:
             raise ValueError(
-                "Multiple Lutron Caseta devices are named "
-                f"{name!r}. Configure this Pico using device_id."
+                f"Multiple devices are named {name!r}. "
+                "Configure this Pico using device_id."
             )
 
         if matches:
@@ -196,17 +166,16 @@ def _resolve_device_id(
     hass: HomeAssistant,
     merged: dict[str, Any],
 ) -> str:
-    """Resolve and validate the configured Pico device ID."""
+    """Resolve the configured Pico device ID."""
     raw_device_id = merged.get("device_id")
 
     if raw_device_id is not None:
         if not isinstance(raw_device_id, str) or not raw_device_id.strip():
             raise ValueError("'device_id' must be a non-empty string.")
 
-        return _validate_lutron_device_id(
-            hass,
-            raw_device_id.strip(),
-        )
+        # The Lutron event supplies the Home Assistant device ID.
+        # Do not require a particular registry identifier format.
+        return raw_device_id.strip()
 
     raw_name = merged.get("name")
 
@@ -214,16 +183,17 @@ def _resolve_device_id(
         raise ValueError("Device must define a non-empty 'device_id' or 'name'.")
 
     name = raw_name.strip()
+
     device_id = lookup_device_id(
         hass,
         name,
     )
 
     if device_id is None:
-        raise ValueError(f"No Lutron Caseta device was found with name {name!r}.")
+        raise ValueError(f"No device was found with name {name!r}.")
 
     _LOGGER.debug(
-        "Resolved Lutron device name %r to device_id %s",
+        "Resolved device name %r to device_id %s",
         name,
         device_id,
     )
@@ -343,7 +313,7 @@ def _normalize_entities(
                 f"{domain!r} domain, got {entity_id!r}."
             )
 
-        # Preserve order while removing duplicate entity IDs.
+        # Preserve order while removing duplicates.
         if entity_id not in entities:
             entities.append(entity_id)
 
@@ -468,8 +438,7 @@ def _expand_action_placeholders(
     """
     Expand entity placeholders while preserving other target fields.
 
-    Other selectors such as area_id, device_id, floor_id, and label_id
-    remain intact.
+    Other target selectors remain unchanged.
     """
     rewritten: list[ActionConfig] = []
 
@@ -555,8 +524,8 @@ def parse_pico_config(
 
     device_type = raw_type.strip().upper()
 
-    # Middle-button defaults require an explicit per-device
-    # middle_button: default opt-in.
+    # middle_button defaults require an explicit
+    # middle_button: default on the device.
     merged = {key: value for key, value in defaults.items() if key != "middle_button"}
     merged.update(device_raw)
 
@@ -764,7 +733,7 @@ def parse_pico_config(
     # BUILD CONFIGURATION
     # ------------------------------------------------------------
 
-    config = PicoConfig(
+    pico_config = PicoConfig(
         device_id=device_id,
         type=device_type,
         covers=covers,
@@ -789,18 +758,18 @@ def parse_pico_config(
     )
 
     placeholders = {
-        "covers": config.covers,
-        "fans": config.fans,
-        "lights": config.lights,
-        "media_players": config.media_players,
-        "switches": config.switches,
+        "covers": pico_config.covers,
+        "fans": pico_config.fans,
+        "lights": pico_config.lights,
+        "media_players": pico_config.media_players,
+        "switches": pico_config.switches,
     }
 
-    config.middle_button = _expand_action_placeholders(
-        config.middle_button,
+    pico_config.middle_button = _expand_action_placeholders(
+        pico_config.middle_button,
         placeholders,
     )
 
-    config.validate()
+    pico_config.validate()
 
-    return config
+    return pico_config
