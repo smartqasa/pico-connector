@@ -1,5 +1,4 @@
 # __init__.py — Integration entry point
-
 from __future__ import annotations
 
 import asyncio
@@ -74,9 +73,15 @@ async def async_setup(
 
     controllers: list[PicoController] = []
 
-    for index, device_raw in enumerate(device_list, start=1):
-        # A YAML entry such as null, a string, or a nested list does
-        # not provide the mapping interface required by the parser.
+    # Track the configuration entry where each physical Pico was first
+    # registered. A second entry for the same device would otherwise
+    # create another controller subscribed to the same Pico events.
+    configured_device_entries: dict[str, int] = {}
+
+    for index, device_raw in enumerate(
+        device_list,
+        start=1,
+    ):
         if not isinstance(device_raw, dict):
             _LOGGER.error(
                 "Invalid %s device entry %s: expected a mapping, got %s: %r",
@@ -109,6 +114,21 @@ async def async_setup(
             )
             continue
 
+        first_entry = configured_device_entries.get(pico_config.device_id)
+
+        if first_entry is not None:
+            _LOGGER.error(
+                "Invalid %s device entry %s: Pico device %s is "
+                "already configured by entry %s",
+                DOMAIN,
+                index,
+                pico_config.device_id,
+                first_entry,
+            )
+            continue
+
+        configured_device_entries[pico_config.device_id] = index
+
         controller = PicoController(
             hass,
             pico_config,
@@ -128,7 +148,10 @@ async def async_setup(
         )
         return True
 
-    hass.data.setdefault(DOMAIN, {})["controllers"] = controllers
+    hass.data.setdefault(
+        DOMAIN,
+        {},
+    )["controllers"] = controllers
 
     # =============================================================
     # SHUTDOWN

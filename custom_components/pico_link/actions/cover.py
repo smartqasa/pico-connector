@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
@@ -33,6 +34,8 @@ class CoverActions:
         Configured middle_button actions override the default stop action.
     """
 
+    TARGET_CACHE_SECONDS = 2.0
+
     def __init__(self, ctrl: "PicoController") -> None:
         self.ctrl = ctrl
 
@@ -46,6 +49,11 @@ class CoverActions:
 
         # Invalidates delayed tasks belonging to older gestures.
         self._gesture_generation = 0
+
+        # Retain the most recently requested position so rapid taps do
+        # not depend on Home Assistant updating current_position first.
+        self._target_position: Optional[int] = None
+        self._target_updated_at = 0.0
 
     # =============================================================
     # PROFILE HELPERS
@@ -63,7 +71,101 @@ class CoverActions:
         return "raise" if self.ctrl.conf.cover_inverted else "lower"
 
     # =============================================================
-    # STATE HELPERS
+    # POSITION STATE
+    # =============================================================
+
+    def _current_position(self) -> Optional[int]:
+        """Return the current position of the primary cover."""
+        state = self.ctrl.utils.get_entity_state()
+
+        if not state:
+            return None
+
+        raw_position = state.attributes.get("current_position")
+
+        if isinstance(raw_position, bool) or not isinstance(
+            raw_position,
+            (int, float, str),
+        ):
+            return None
+
+        try:
+            position = round(float(raw_position))
+        except ValueError:
+            return None
+
+        return max(
+            0,
+            min(100, position),
+        )
+
+    def _set_position_target(self, position: int) -> None:
+        """Store the most recently requested cover position."""
+        self._target_position = max(
+            0,
+            min(100, position),
+        )
+        self._target_updated_at = time.monotonic()
+
+    def _clear_position_target(self) -> None:
+        """Discard the optimistic cover-position target."""
+        self._target_position = None
+        self._target_updated_at = 0.0
+
+    def _position_for_step(self) -> Optional[int]:
+        """
+        Return the recent requested position or resynchronize from HA.
+
+        A short cache allows rapid taps to build on the previous request
+        without keeping an optimistic value authoritative indefinitely.
+        """
+        now = time.monotonic()
+
+        if (
+            self._target_position is not None
+            and now - self._target_updated_at <= self.TARGET_CACHE_SECONDS
+        ):
+            return self._target_position
+
+        position = self._current_position()
+
+        if position is not None:
+            self._set_position_target(position)
+
+        return position
+
+    def _next_position(self, button: str) -> Optional[int]:
+        """Calculate and store the next requested step position."""
+        position = self._position_for_step()
+
+        if position is None:
+            return None
+
+        step = self.ctrl.conf.cover_step_pct
+
+        if button == "raise":
+            new_position = min(
+                100,
+                position + step,
+            )
+        else:
+            new_position = max(
+                0,
+                position - step,
+            )
+
+        if new_position == position:
+            return None
+
+        # Store this target before task creation. Another rapid tap can
+        # therefore build from this command even if HA still reports
+        # the previous physical position.
+        self._set_position_target(new_position)
+
+        return new_position
+
+    # =============================================================
+    # GESTURE STATE
     # =============================================================
 
     def _is_moving(self) -> bool:
@@ -73,27 +175,10 @@ class CoverActions:
         if not state:
             return False
 
-        return state.state in ("opening", "closing")
-
-    def _current_position(self) -> Optional[int]:
-        """Return the current position of the primary cover."""
-        state = self.ctrl.utils.get_entity_state()
-
-        if not state:
-            return None
-
-        position = state.attributes.get("current_position")
-
-        if isinstance(position, bool) or not isinstance(
-            position,
-            (int, float, str),
-        ):
-            return None
-
-        try:
-            return round(float(position))
-        except ValueError:
-            return None
+        return state.state in (
+            "opening",
+            "closing",
+        )
 
     def _clear_gesture_state(
         self,
@@ -106,7 +191,7 @@ class CoverActions:
         Returns True when continuous movement had already started.
 
         The position-step task is not canceled on a normal RAISE/LOWER
-        release because a quick tap must still complete its position command.
+        release because a quick tap must still complete its command.
         """
         was_holding = self._is_holding
 
@@ -136,6 +221,8 @@ class CoverActions:
 
         # A new ON/OFF press while movement is active acts as STOP.
         if was_holding or self._is_moving():
+            self._clear_position_target()
+
             self.ctrl.create_task(
                 self._stop(),
                 "cover-stop",
@@ -152,7 +239,10 @@ class CoverActions:
         # P2B/2B tap actions are deferred until release so the same
         # physical button can be interpreted as a hold.
         self._hold_task = self.ctrl.create_task(
-            self._hold_lifecycle(button, generation),
+            self._hold_lifecycle(
+                button,
+                generation,
+            ),
             f"cover-{button}-hold",
         )
 
@@ -161,12 +251,15 @@ class CoverActions:
         if not self._supports_onoff_hold():
             return
 
+        # Ignore a release belonging to an older gesture.
         if self._active_button != button:
             return
 
         was_holding = self._clear_gesture_state()
 
         if was_holding:
+            self._clear_position_target()
+
             self.ctrl.create_task(
                 self._stop(),
                 "cover-stop",
@@ -183,11 +276,17 @@ class CoverActions:
             should_open = not should_open
 
         if should_open:
+            open_position = self.ctrl.conf.cover_open_pos
+
+            self._set_position_target(open_position)
+
             self.ctrl.create_task(
                 self._open_to_position(),
                 "cover-open",
             )
         else:
+            self._set_position_target(0)
+
             self.ctrl.create_task(
                 self._close_full(),
                 "cover-close",
@@ -208,33 +307,61 @@ class CoverActions:
             # Stop the previous continuous direction before stepping
             # in the newly requested direction.
             self._step_task = self.ctrl.create_task(
-                self._stop_then_step(button, generation),
+                self._stop_then_step(
+                    button,
+                    generation,
+                ),
                 f"cover-{button}-transition",
             )
         else:
-            self._step_task = self.ctrl.create_task(
-                self._step(button),
-                f"cover-{button}-step",
+            self._schedule_step(
+                button,
+                task_name=f"cover-{button}-step",
             )
 
         self._hold_task = self.ctrl.create_task(
-            self._hold_lifecycle(button, generation),
+            self._hold_lifecycle(
+                button,
+                generation,
+            ),
             f"cover-{button}-hold",
         )
 
     def _release_raise_lower(self, button: str) -> None:
         """Complete the active RAISE or LOWER gesture."""
+        # Ignore a release belonging to an older gesture.
         if self._active_button != button:
             return
 
         # Allow the immediate position step to finish on a quick tap.
-        was_holding = self._clear_gesture_state(cancel_step=False)
+        was_holding = self._clear_gesture_state(
+            cancel_step=False,
+        )
 
         if was_holding:
+            self._clear_position_target()
+
             self.ctrl.create_task(
                 self._stop(),
                 "cover-stop",
             )
+
+    def _schedule_step(
+        self,
+        button: str,
+        *,
+        task_name: str,
+    ) -> None:
+        """Calculate a step synchronously and schedule its service call."""
+        new_position = self._next_position(button)
+
+        if new_position is None:
+            return
+
+        self._step_task = self.ctrl.create_task(
+            self._set_position(new_position),
+            task_name,
+        )
 
     # =============================================================
     # PROFILE ENTRY POINTS
@@ -254,6 +381,8 @@ class CoverActions:
 
     def press_stop(self) -> None:
         was_holding = self._clear_gesture_state()
+        self._clear_position_target()
+
         actions = self.ctrl.conf.middle_button
 
         if actions:
@@ -308,6 +437,8 @@ class CoverActions:
             if generation != self._gesture_generation or self._active_button != button:
                 return
 
+            # Continuous movement does not have a known target position.
+            self._clear_position_target()
             self._is_holding = True
 
             direction = (
@@ -333,10 +464,19 @@ class CoverActions:
         if generation != self._gesture_generation or self._active_button != button:
             return
 
-        await self._step(button)
+        # Continuous movement invalidates the previous optimistic target.
+        self._clear_position_target()
 
-    async def _stop_then_execute(self, actions: Any) -> None:
-        """Stop Pico movement before running custom middle-button actions."""
+        new_position = self._next_position(button)
+
+        if new_position is not None:
+            await self._set_position(new_position)
+
+    async def _stop_then_execute(
+        self,
+        actions: Any,
+    ) -> None:
+        """Stop movement before running custom middle-button actions."""
         await self._stop(blocking=True)
         await self.ctrl.utils.execute_button_action(actions)
 
@@ -356,11 +496,7 @@ class CoverActions:
             )
             return
 
-        await self.ctrl.utils.call_service(
-            "set_cover_position",
-            {"position": open_position},
-            domain="cover",
-        )
+        await self._set_position(open_position)
 
     async def _close_full(self) -> None:
         await self.ctrl.utils.call_service(
@@ -390,26 +526,14 @@ class CoverActions:
             domain="cover",
         )
 
-    async def _step(self, button: str) -> None:
-        """Move the cover by one configured position step."""
-        position = self._current_position()
-
-        if position is None:
-            return
-
-        step = self.ctrl.conf.cover_step_pct
-
-        if button == "raise":
-            new_position = min(100, position + step)
-        else:
-            new_position = max(0, position - step)
-
-        if new_position == position:
-            return
-
+    async def _set_position(
+        self,
+        position: int,
+    ) -> None:
+        """Set all configured covers to a specific position."""
         await self.ctrl.utils.call_service(
             "set_cover_position",
-            {"position": new_position},
+            {"position": position},
             domain="cover",
         )
 
@@ -418,5 +542,6 @@ class CoverActions:
     # =============================================================
 
     def reset_state(self) -> None:
-        """Cancel pending gesture tasks and clear all gesture state."""
+        """Cancel pending gesture tasks and clear all cover state."""
         self._clear_gesture_state()
+        self._clear_position_target()
