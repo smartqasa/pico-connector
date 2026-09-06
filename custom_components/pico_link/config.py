@@ -4,8 +4,12 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+import voluptuous as vol
 from homeassistant.core import HomeAssistant, valid_entity_id
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.script import async_validate_actions_config
 
 from .const import VALID_PICO_TYPES
 
@@ -322,73 +326,43 @@ def _normalize_entities(
 
 # ================================================================
 # ACTION VALIDATION
+#
+# Actions are validated with Home Assistant's own script schema and
+# executed with homeassistant.helpers.script.Script (see
+# utilities.py), instead of a hand-rolled plain-service-call
+# validator. This means the full range of native Home Assistant
+# actions is supported here, including conditions, if-then, choose,
+# repeat, and templates — the same building blocks available in the
+# automation editor's action picker — not just plain "domain.service"
+# calls.
 # ================================================================
 
 
-def _normalize_action(
-    value: Any,
-    *,
-    context: str,
-) -> ActionConfig:
-    """Validate and copy one Home Assistant action mapping."""
-    if not isinstance(value, dict):
-        raise ValueError(f"{context} must be a mapping, got {type(value).__name__}.")
-
-    action = dict(value)
-    action_name = action.get("action")
-
-    if not isinstance(action_name, str):
-        raise ValueError(f"{context} must define an 'action' string.")
-
-    domain, separator, service = action_name.partition(".")
-
-    if not separator or not domain or not service:
-        raise ValueError(
-            f"{context} contains invalid action "
-            f"{action_name!r}. Expected 'domain.service'."
-        )
-
-    data = action.get(
-        "data",
-        {},
-    )
-
-    if not isinstance(data, dict):
-        raise ValueError(f"{context} data must be a mapping.")
-
-    target = action.get("target")
-
-    if target is not None and not isinstance(target, dict):
-        raise ValueError(f"{context} target must be a mapping.")
-
-    return action
-
-
-def _normalize_action_list(
+async def _validate_actions(
+    hass: HomeAssistant,
     value: Any,
     *,
     context: str,
 ) -> list[ActionConfig]:
-    """Validate and copy an ordered action list."""
+    """Validate an ordered action list against Home Assistant's own schema."""
     if value is None:
         return []
 
     if not isinstance(value, list):
         raise ValueError(f"{context} must be a list of actions.")
 
-    return [
-        _normalize_action(
-            action,
-            context=f"{context} action {index}",
+    try:
+        schema_validated = cv.SCRIPT_SCHEMA(value)
+        return await async_validate_actions_config(
+            hass,
+            schema_validated,
         )
-        for index, action in enumerate(
-            value,
-            start=1,
-        )
-    ]
+    except (vol.Invalid, HomeAssistantError) as err:
+        raise ValueError(f"{context}: {err}") from err
 
 
-def _normalize_buttons(
+async def _validate_buttons(
+    hass: HomeAssistant,
     value: Any,
 ) -> dict[str, list[ActionConfig]]:
     """Validate a 4B button-to-action mapping."""
@@ -413,7 +387,8 @@ def _normalize_buttons(
                 f"Unsupported 4B button {button!r}. Valid buttons are: {valid_buttons}."
             )
 
-        actions = _normalize_action_list(
+        actions = await _validate_actions(
+            hass,
             raw_actions,
             context=f"buttons.{button}",
         )
@@ -428,79 +403,65 @@ def _normalize_buttons(
 
 # ================================================================
 # PLACEHOLDER EXPANSION
+#
+# Placeholder tokens (e.g. "lights") are not valid entity IDs, so they
+# must be expanded before Home Assistant's schema validation runs.
+# This walks the raw, not-yet-validated action structure recursively,
+# so placeholders are found inside nested if-then/choose/repeat blocks
+# too, not just top-level actions.
 # ================================================================
 
 
-def _expand_action_placeholders(
-    actions: list[ActionConfig],
+def _expand_placeholders(
+    value: Any,
     placeholders: dict[str, list[str]],
-) -> list[ActionConfig]:
-    """
-    Expand entity placeholders while preserving other target fields.
-
-    Other target selectors remain unchanged.
-    """
-    rewritten: list[ActionConfig] = []
-
-    for action_index, action in enumerate(
-        actions,
-        start=1,
-    ):
-        new_action = dict(action)
-        target = new_action.get("target")
-
-        if not isinstance(target, dict):
-            rewritten.append(new_action)
-            continue
-
-        entity_ids = target.get("entity_id")
-
-        if entity_ids is None:
-            rewritten.append(new_action)
-            continue
-
-        if isinstance(entity_ids, str):
-            expanded_entity_ids: str | list[str]
-
-            if entity_ids in placeholders:
-                expanded_entity_ids = list(placeholders[entity_ids])
-            else:
-                expanded_entity_ids = entity_ids
-
-        elif isinstance(entity_ids, list):
-            expanded: list[str] = []
-
-            for entity_index, entity_id in enumerate(
-                entity_ids,
-                start=1,
-            ):
-                if not isinstance(entity_id, str):
-                    raise ValueError(
-                        f"middle_button action {action_index} "
-                        "target entity_id entry "
-                        f"{entity_index} must be a string."
-                    )
-
-                if entity_id in placeholders:
-                    expanded.extend(placeholders[entity_id])
-                else:
-                    expanded.append(entity_id)
-
-            expanded_entity_ids = expanded
-
-        else:
-            raise ValueError(
-                f"middle_button action {action_index} target "
-                "entity_id must be a string or list of strings."
+) -> Any:
+    """Recursively expand entity placeholders anywhere in an action tree."""
+    if isinstance(value, dict):
+        return {
+            key: (
+                _expand_target(val, placeholders)
+                if key == "target" and isinstance(val, dict)
+                else _expand_placeholders(val, placeholders)
             )
+            for key, val in value.items()
+        }
+
+    if isinstance(value, list):
+        return [_expand_placeholders(item, placeholders) for item in value]
+
+    return value
+
+
+def _expand_target(
+    target: dict[str, Any],
+    placeholders: dict[str, list[str]],
+) -> dict[str, Any]:
+    """Expand entity placeholders in one action's target mapping."""
+    entity_ids = target.get("entity_id")
+
+    if isinstance(entity_ids, str):
+        if entity_ids not in placeholders:
+            return target
 
         new_target = dict(target)
-        new_target["entity_id"] = expanded_entity_ids
-        new_action["target"] = new_target
+        new_target["entity_id"] = list(placeholders[entity_ids])
+        return new_target
 
-        rewritten.append(new_action)
+    if isinstance(entity_ids, list):
+        expanded: list[Any] = []
 
-    return rewritten
+        for entity_id in entity_ids:
+            if isinstance(entity_id, str) and entity_id in placeholders:
+                expanded.extend(placeholders[entity_id])
+            else:
+                expanded.append(entity_id)
+
+        new_target = dict(target)
+        new_target["entity_id"] = expanded
+        return new_target
+
+    return target
 
 
 # ================================================================
@@ -508,7 +469,7 @@ def _expand_action_placeholders(
 # ================================================================
 
 
-def parse_pico_config(
+async def parse_pico_config(
     hass: HomeAssistant,
     defaults: dict[str, Any],
     device_raw: dict[str, Any],
@@ -694,22 +655,40 @@ def parse_pico_config(
     # MIDDLE BUTTON
     # ------------------------------------------------------------
 
+    placeholders = {
+        "covers": covers,
+        "fans": fans,
+        "lights": lights,
+        "media_players": media_players,
+        "switches": switches,
+    }
+
     raw_middle_button = device_raw.get("middle_button")
 
     if device_type == "3BRL":
         if raw_middle_button == "default":
-            middle_button = _normalize_action_list(
+            expanded_middle_button = _expand_placeholders(
                 defaults.get(
                     "middle_button",
                     [],
                 ),
+                placeholders,
+            )
+            middle_button = await _validate_actions(
+                hass,
+                expanded_middle_button,
                 context="defaults.middle_button",
             )
         elif raw_middle_button is None:
             middle_button = []
         else:
-            middle_button = _normalize_action_list(
+            expanded_middle_button = _expand_placeholders(
                 raw_middle_button,
+                placeholders,
+            )
+            middle_button = await _validate_actions(
+                hass,
+                expanded_middle_button,
                 context="middle_button",
             )
     else:
@@ -725,7 +704,8 @@ def parse_pico_config(
     # 4B BUTTONS
     # ------------------------------------------------------------
 
-    buttons = _normalize_buttons(
+    buttons = await _validate_buttons(
+        hass,
         merged.get("buttons"),
     )
 
@@ -755,19 +735,6 @@ def parse_pico_config(
         media_player_vol_step=media_player_vol_step,
         middle_button=middle_button,
         buttons=buttons,
-    )
-
-    placeholders = {
-        "covers": pico_config.covers,
-        "fans": pico_config.fans,
-        "lights": pico_config.lights,
-        "media_players": pico_config.media_players,
-        "switches": pico_config.switches,
-    }
-
-    pico_config.middle_button = _expand_action_placeholders(
-        pico_config.middle_button,
-        placeholders,
     )
 
     pico_config.validate()

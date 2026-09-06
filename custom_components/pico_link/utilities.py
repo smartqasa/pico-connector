@@ -3,7 +3,10 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Optional, cast
 
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Context, HomeAssistant
+from homeassistant.helpers.script import Script
+
+from .const import DOMAIN
 
 if TYPE_CHECKING:
     from .controller import PicoController
@@ -157,72 +160,33 @@ class SharedUtils:
 
     async def execute_button_action(
         self,
-        action: Any,
+        actions: list[dict[str, Any]],
+        *,
+        name: str = "pico_link_action",
     ) -> None:
-        """Execute one configured action or an ordered list of actions."""
-        if isinstance(action, list):
-            for item in action:
-                await self.execute_button_action(item)
+        """
+        Run a configured action sequence.
 
+        Actions were already validated against Home Assistant's own
+        script schema in config.py, so the full range of native
+        actions is supported here: plain service calls, conditions,
+        if-then, choose, repeat, and templates — executed with the
+        same engine Home Assistant scripts and automations use.
+        """
+        if not actions:
             return
 
-        if not isinstance(action, dict):
-            _LOGGER.error(
-                "Device %s: invalid action format: %r",
-                self.conf.device_id,
-                action,
-            )
-            return
-
-        action_name = action.get("action")
-
-        if not isinstance(action_name, str):
-            _LOGGER.error(
-                "Device %s: invalid action string %r",
-                self.conf.device_id,
-                action_name,
-            )
-            return
-
-        domain, separator, service = action_name.partition(".")
-
-        if not separator or not domain or not service:
-            _LOGGER.error(
-                "Device %s: invalid action string %r",
-                self.conf.device_id,
-                action_name,
-            )
-            return
-
-        raw_data = action.get("data", {})
-
-        if not isinstance(raw_data, dict):
-            _LOGGER.error(
-                "Device %s: data for %s must be a mapping",
-                self.conf.device_id,
-                action_name,
-            )
-            return
-
-        raw_target = action.get("target")
-
-        if raw_target is not None and not isinstance(
-            raw_target,
-            dict,
-        ):
-            _LOGGER.error(
-                "Device %s: target for %s must be a mapping",
-                self.conf.device_id,
-                action_name,
-            )
-            return
-
-        # Configured action lists are deliberately blocking so each
-        # action completes before the next action begins.
-        await self._execute_service_call(
-            domain,
-            service,
-            raw_data,
-            blocking=True,
-            target=raw_target,
+        script = Script(
+            self.hass,
+            actions,
+            name,
+            DOMAIN,
         )
+
+        try:
+            await script.async_run(context=Context())
+        except Exception:
+            _LOGGER.exception(
+                "Device %s: error running configured action sequence",
+                self.conf.device_id,
+            )

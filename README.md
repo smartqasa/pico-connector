@@ -604,7 +604,10 @@ middle_button:
 
 ## Action Format
 
-Custom actions use Home Assistant’s `domain.service` format:
+`middle_button` and `buttons` are validated and executed with Home
+Assistant's own action engine — the same one behind automations and
+scripts — not just a hand-rolled list of service calls. A plain action uses
+Home Assistant's `domain.service` format:
 
 ```yaml
 - action: light.turn_on
@@ -614,13 +617,47 @@ Custom actions use Home Assistant’s `domain.service` format:
     brightness_pct: 80
 ```
 
+Because validation and execution go through Home Assistant's real script
+schema (`cv.SCRIPT_SCHEMA` + `homeassistant.helpers.script.Script`), the
+full range of native actions is available too — conditions, **if-then**,
+**choose**, **repeat**, **wait**, and templates in service data — not just
+plain service calls. For example, a STOP action that behaves differently
+depending on current state:
+
+```yaml
+middle_button:
+  - if:
+      - condition: state
+        entity_id: light.kitchen_edge
+        state: "on"
+      - condition: state
+        entity_id: light.kitchen_center
+        state: "off"
+    then:
+      - action: light.turn_off
+        target:
+          entity_id: light.kitchen_edge
+      - action: light.turn_on
+        target:
+          entity_id: light.kitchen_center
+    else:
+      - action: light.turn_on
+        target:
+          entity_id: light.kitchen_edge
+      - action: light.turn_off
+        target:
+          entity_id: light.kitchen_center
+```
+
 Pico Link validates that:
 
-- The action is a mapping.
-- `action` is a string in `domain.service` form.
-- `data`, when provided, is a mapping.
-- `target`, when provided, is a mapping.
+- The action list is a list, and each item conforms to Home Assistant's
+  action schema.
 - 4B button values are nonempty action lists.
+
+Entity placeholders (see [Entity Placeholders](#entity-placeholders) above)
+are expanded before validation, and work inside nested if-then/choose
+branches too.
 
 ---
 
