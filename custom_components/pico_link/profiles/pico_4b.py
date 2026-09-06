@@ -12,7 +12,7 @@ _LOGGER = logging.getLogger(__name__)
 class Pico4ButtonScene:
     """
     Pico 4-button scene controller:
-    - Each button maps to a YAML-defined list of HA service calls.
+    - Each button maps to a configured list of HA action calls.
     - Executes each action in order.
     """
 

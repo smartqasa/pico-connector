@@ -510,7 +510,6 @@ def _expand_action_placeholders(
 
 def parse_pico_config(
     hass: HomeAssistant,
-    defaults: dict[str, Any],
     device_raw: dict[str, Any],
 ) -> PicoConfig:
     """Normalize and validate one Pico Link device configuration."""
@@ -524,10 +523,7 @@ def parse_pico_config(
 
     device_type = raw_type.strip().upper()
 
-    # middle_button defaults require an explicit
-    # middle_button: default on the device.
-    merged = {key: value for key, value in defaults.items() if key != "middle_button"}
-    merged.update(device_raw)
+    merged = dict(device_raw)
 
     device_id = _resolve_device_id(
         hass,
@@ -697,15 +693,7 @@ def parse_pico_config(
     raw_middle_button = device_raw.get("middle_button")
 
     if device_type == "3BRL":
-        if raw_middle_button == "default":
-            middle_button = _normalize_action_list(
-                defaults.get(
-                    "middle_button",
-                    [],
-                ),
-                context="defaults.middle_button",
-            )
-        elif raw_middle_button is None:
+        if raw_middle_button is None:
             middle_button = []
         else:
             middle_button = _normalize_action_list(

@@ -2,6 +2,7 @@
   "name": "Pico Link",
   "domain": "pico_link",
   "version": "0.3.11",
+  "config_flow": true,
   "documentation": "https://github.com/smartqasa/pico-link",
   "issue_tracker": "https://github.com/smartqasa/pico-link/issues",
   "codeowners": ["@smartqasa"],
