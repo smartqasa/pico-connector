@@ -5,7 +5,7 @@ import logging
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Event, HomeAssistant, callback
 
 from .config import parse_pico_config
 from .const import DOMAIN
@@ -51,10 +51,16 @@ async def async_setup_entry(
     entry.runtime_data = controller
 
     # Make sure Pico work is unsubscribed and stopped on a clean HA
-    # shutdown, not just on entry unload.
+    # shutdown, not just on entry unload. Must be a @callback so the
+    # event bus invokes it directly on the event loop rather than in
+    # an executor thread, since it calls hass.async_create_task.
+    @callback
+    def _handle_stop(_event: Event) -> None:
+        hass.async_create_task(controller.async_stop())
+
     unsub_stop = hass.bus.async_listen_once(
         EVENT_HOMEASSISTANT_STOP,
-        lambda _event: hass.async_create_task(controller.async_stop()),
+        _handle_stop,
     )
     entry.async_on_unload(unsub_stop)
 

@@ -1,10 +1,10 @@
 {
   "name": "Pico Link",
   "domain": "pico_link",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "config_flow": true,
-  "documentation": "https://github.com/smartqasa/pico-link",
-  "issue_tracker": "https://github.com/smartqasa/pico-link/issues",
+  "documentation": "https://github.com/davidcoulson/pico-link",
+  "issue_tracker": "https://github.com/davidcoulson/pico-link/issues",
   "codeowners": ["@smartqasa"],
   "iot_class": "local_push",
   "quality_scale": "internal",
