@@ -93,7 +93,7 @@ async def async_setup(
             continue
 
         try:
-            pico_config: PicoConfig = parse_pico_config(
+            pico_config: PicoConfig = await parse_pico_config(
                 hass,
                 defaults,
                 device_raw,
