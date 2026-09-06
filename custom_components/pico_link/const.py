@@ -6,7 +6,7 @@ DOMAIN = "pico_link"
 PICO_EVENT_TYPE = "lutron_caseta_button_event"
 
 # --------------------------------------------------------------------
-# VALID YAML TYPES (explicitly required in device config)
+# VALID PICO TYPES (explicitly required in device config)
 # --------------------------------------------------------------------
 VALID_PICO_TYPES = {
     "P2B",  # Paddle Pico
@@ -52,3 +52,15 @@ DOMAIN_ENTITY_FIELDS = {
     "media_player": "media_players",
     "switch": "switches",
 }
+
+# --------------------------------------------------------------------
+# CONFIG FLOW
+# --------------------------------------------------------------------
+
+# 4B scene-button keys, in the order they should appear in the UI.
+SCENE_BUTTONS = [
+    "button_1",
+    "button_2",
+    "button_3",
+    "off",
+]

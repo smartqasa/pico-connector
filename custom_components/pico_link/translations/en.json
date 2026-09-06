@@ -1,0 +1,96 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Add a Pico",
+        "description": "Select the Pico remote to link. Only Lutron Pico devices that aren't already configured are listed — its type is detected automatically from the hardware, so there's nothing else to pick here.",
+        "data": {
+          "device_id": "Pico device"
+        }
+      },
+      "entities": {
+        "title": "What does this Pico control?",
+        "description": "Fill in the entities for the ONE domain this Pico controls, and leave the rest empty.",
+        "data": {
+          "covers": "Covers",
+          "fans": "Fans",
+          "lights": "Lights",
+          "media_players": "Media players",
+          "switches": "Switches"
+        }
+      },
+      "buttons": {
+        "title": "Scene buttons",
+        "description": "Assign one or more actions to each button. A button left empty does nothing when pressed. At least one button must be configured.",
+        "data": {
+          "button_1": "Button 1",
+          "button_2": "Button 2",
+          "button_3": "Button 3",
+          "off": "Off button"
+        }
+      }
+    },
+    "error": {
+      "single_domain_required": "Fill in exactly one of the fields above — the one domain this Pico controls — and leave the rest empty.",
+      "buttons_required": "Configure at least one button with actions."
+    },
+    "abort": {
+      "already_configured": "This Pico is already configured.",
+      "no_devices_found": "No unconfigured Lutron Pico remotes were found. Make sure the Lutron Caséta integration is set up and that the Pico isn't already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "entities": {
+        "title": "What does this Pico control?",
+        "description": "Fill in the entities for the ONE domain this Pico controls, and leave the rest empty.",
+        "data": {
+          "covers": "Covers",
+          "fans": "Fans",
+          "lights": "Lights",
+          "media_players": "Media players",
+          "switches": "Switches"
+        }
+      },
+      "options": {
+        "title": "Options",
+        "description": "Fine-tune timing and behavior for this Pico.",
+        "data": {
+          "hold_time_ms": "Hold time",
+          "step_time_ms": "Step time",
+          "cover_open_pos": "Open position",
+          "cover_step_pct": "Step size",
+          "cover_inverted": "Invert on/off direction",
+          "fan_on_pct": "On speed",
+          "light_on_pct": "On brightness",
+          "light_low_pct": "Minimum brightness",
+          "light_step_pct": "Step size",
+          "light_transition_on": "On transition",
+          "light_transition_off": "Off transition",
+          "media_player_vol_step": "Volume step"
+        }
+      },
+      "middle_button": {
+        "title": "STOP button",
+        "description": "Optional custom actions for the middle (STOP) button. Leave empty to use the default STOP behavior for this domain.",
+        "data": {
+          "middle_button": "STOP actions"
+        }
+      },
+      "buttons": {
+        "title": "Scene buttons",
+        "description": "Assign one or more actions to each button. A button left empty does nothing when pressed. At least one button must be configured.",
+        "data": {
+          "button_1": "Button 1",
+          "button_2": "Button 2",
+          "button_3": "Button 3",
+          "off": "Off button"
+        }
+      }
+    },
+    "error": {
+      "single_domain_required": "Fill in exactly one of the fields above — the one domain this Pico controls — and leave the rest empty.",
+      "buttons_required": "Configure at least one button with actions."
+    }
+  }
+}

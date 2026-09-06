@@ -1,7 +1,8 @@
 {
   "name": "Pico Link",
   "domain": "pico_link",
-  "version": "0.3.11",
+  "version": "0.4.0",
+  "config_flow": true,
   "documentation": "https://github.com/smartqasa/pico-link",
   "issue_tracker": "https://github.com/smartqasa/pico-link/issues",
   "codeowners": ["@smartqasa"],
